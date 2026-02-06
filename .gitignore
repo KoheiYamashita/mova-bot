@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+build/
+__pycache__/
+*.pyc
+
+# Secrets
+wifi_credentials.json
