@@ -73,9 +73,15 @@ constexpr uint32_t WATCHDOG_TIMEOUT_MS = 3000;  // NOTE: Phase 2 で実環境テ
 constexpr uint16_t HTTP_PORT   = 80;
 constexpr uint16_t STREAM_PORT = 81;
 
+// ── SD card ──────────────────────────────────────────────────────
+// NOTE: CS ピンはボードリビジョンで異なる場合あり。SD 認識失敗時はここと
+//       SPI.begin() の要否を確認のこと (M5.begin() 後は通常不要)
+constexpr uint8_t SD_CS_PIN = 4;  // CoreS3 built-in SD slot
+
 // ── WiFi ───────────────────────────────────────────────────────
-constexpr const char* WIFI_CONFIG_PATH     = "/wifi.json";
-constexpr uint32_t    WIFI_RETRY_INTERVAL_MS = 5000;
+constexpr const char* WIFI_CONFIG_PATH       = "/wifi.txt";
+constexpr uint32_t    WIFI_CONNECT_TIMEOUT_MS = 10000;  // Single connection attempt timeout
+constexpr uint32_t    WIFI_RETRY_INTERVAL_MS  = 5000;
 
 }  // namespace mova
 
