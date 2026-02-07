@@ -11,8 +11,20 @@
 #include "emoji_data.h"
 #include "audio_player.h"
 #include "camera.h"
+#include <ArduinoJson.h>
 
 namespace mova {
+
+// PSRAM allocator for ArduinoJson (large audio payloads exceed internal SRAM)
+struct PsramAllocator : ArduinoJson::Allocator {
+    void* allocate(size_t size) override {
+        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    void deallocate(void* ptr) override { free(ptr); }
+    void* reallocate(void* ptr, size_t new_size) override {
+        return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+};
 
 // Sentinel value indicating body was too large (no allocation to free)
 // Cannot use constexpr with reinterpret_cast, so use a define
@@ -72,9 +84,9 @@ bool MOVAWebServer::begin() {
             // Already marked as too large
             if (request->_tempObject == BODY_TOO_LARGE_SENTINEL) return;
 
-            // First chunk: allocate buffer
+            // First chunk: allocate buffer in PSRAM (large audio payloads)
             if (index == 0) {
-                request->_tempObject = malloc(total + 1);
+                request->_tempObject = ps_malloc(total + 1);
                 if (!request->_tempObject) return;  // malloc failed → stays null
             }
             if (!request->_tempObject) return;
@@ -151,11 +163,11 @@ void MOVAWebServer::handleCommand(AsyncWebServerRequest* request) {
         return;
     }
 
-    // Parse JSON (ArduinoJson v7 copies data internally)
-    JsonDocument doc;
+    // Parse JSON (use PSRAM allocator for large audio payloads)
+    static PsramAllocator psramAlloc;
+    JsonDocument doc(&psramAlloc);
     DeserializationError err = deserializeJson(doc, static_cast<char*>(tmp));
 
-    // Free raw body immediately — ArduinoJson v7 has its own copy (D10)
     free(tmp);
     tmp = nullptr;
 

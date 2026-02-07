@@ -72,6 +72,9 @@ constexpr uint8_t QUEUE_SIZE_MOTOR   = 8;
 constexpr uint8_t QUEUE_SIZE_AUDIO   = 4;
 constexpr uint8_t QUEUE_SIZE_DISPLAY = 4;
 
+// ── Speaker ──────────────────────────────────────────────────
+constexpr uint8_t SPEAKER_DEFAULT_VOLUME = 128;  // 0-255
+
 // ── Watchdog ───────────────────────────────────────────────────
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 3000;  // NOTE: Phase 2 で実環境テスト時に調整
 
@@ -89,8 +92,8 @@ constexpr uint16_t STREAM_PORT = 81;
 constexpr uint8_t SD_CS_PIN = 4;  // CoreS3 built-in SD slot
 
 // ── Web Server ───────────────────────────────────────────────────
-constexpr size_t MAX_JSON_BODY_SIZE   = 65536;  // POST /command 最大ボディサイズ (64KB)
-constexpr size_t MAX_AUDIO_BASE64_LEN = 49152;  // Base64 音声データ上限 (48KB → ~36KB PCM)
+constexpr size_t MAX_JSON_BODY_SIZE   = 196608;  // POST /command 最大ボディサイズ (192KB)
+constexpr size_t MAX_AUDIO_BASE64_LEN = 131072;  // Base64 音声データ上限 (128KB → ~96KB PCM)
 
 // ── WiFi ───────────────────────────────────────────────────────
 constexpr const char* WIFI_CONFIG_PATH       = "/wifi.txt";

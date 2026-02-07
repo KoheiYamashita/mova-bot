@@ -134,6 +134,10 @@ void setup() {
         fatalError("Audio queue alloc failed");
     }
 
+    if (!mova::audioInit()) {
+        Serial.println("[Audio] WARNING: Speaker init failed - audio playback disabled");
+    }
+
     xTaskCreatePinnedToCore(
         mova::taskDisplay, "Display",
         mova::TASK_STACK_DISPLAY, nullptr,
