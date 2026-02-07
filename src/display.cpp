@@ -1,16 +1,22 @@
 #include "display.h"
-#include <Arduino.h>
+#include "emoji_data.h"
+#include <M5Unified.h>
 
 namespace mova {
 
 void displayStatus(const char* text) {
-    // TODO: Phase 6 - Draw status text on display
-    (void)text;
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.drawString(text, M5.Display.width() / 2, M5.Display.height() / 2);
 }
 
 void displayEmoji(uint8_t index) {
-    // TODO: Phase 6 - Draw emoji sprite on display
-    (void)index;
+    const EmojiEntry* entry = getEmoji(index);
+    if (!entry) entry = getEmoji(EMOJI_DEFAULT_INDEX);
+    if (!entry) return;
+    M5.Display.drawJpg(entry->jpegData, entry->jpegLen, 0, 0);
 }
 
 void taskDisplay(void* param) {
@@ -18,7 +24,16 @@ void taskDisplay(void* param) {
     DisplayCommand cmd;
     for (;;) {
         if (xQueueReceive(g_displayQueue, &cmd, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("[Display] Received command type=%d (stub)\n", cmd.type);
+            switch (cmd.type) {
+                case DisplayCommand::STATUS:
+                    displayStatus(cmd.statusText);
+                    break;
+                case DisplayCommand::EMOJI:
+                    displayEmoji(cmd.emojiIndex);
+                    break;
+                default:
+                    break;
+            }
         }
     }
 }

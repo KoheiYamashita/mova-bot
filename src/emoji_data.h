@@ -7,16 +7,22 @@
 namespace mova {
 
 struct EmojiEntry {
-    const char* name;
-    const uint16_t* data;   // RGB565 pixel data
-    uint16_t width;
-    uint16_t height;
+    const char* name;            // UTF-8 emoji string (for matching)
+    const uint8_t* jpegData;     // JPEG byte array in Flash
+    uint32_t jpegLen;            // JPEG data length
 };
 
-// TODO: Phase 6 - Populate emoji table
-constexpr size_t EMOJI_COUNT = 0;
+constexpr size_t EMOJI_COUNT = 8;
+constexpr uint8_t EMOJI_DEFAULT_INDEX = 0;  // 😐
+constexpr uint8_t EMOJI_INVALID = 0xFF;
 
-const EmojiEntry* findEmoji(const char* name);
+extern const EmojiEntry EMOJI_TABLE[EMOJI_COUNT];
+
+// Trim leading/trailing whitespace from input into outBuf. Returns length, or 0 on empty/overflow.
+size_t normalizeEmoji(const char* input, char* outBuf, size_t outBufLen);
+
+uint8_t findEmojiIndex(const char* name);
+const EmojiEntry* getEmoji(uint8_t index);
 
 }  // namespace mova
 

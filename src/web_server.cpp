@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "display.h"
+#include "emoji_data.h"
 #include "audio_player.h"
 #include "camera.h"
 
@@ -26,8 +27,10 @@ void MOVAWebServer::init(QueueHandle_t motorQ, QueueHandle_t displayQ,
     audioQueue_   = audioQ;
     motor_        = motor;
 
-    // D6: 😐 (U+1F610) UTF-8
-    memcpy(currentEmoji_, "\xF0\x9F\x98\x90", 5);  // 4 bytes + NUL
+    // D6: Initialize to default emoji 😐 (from EMOJI_TABLE)
+    const EmojiEntry* defaultEmoji = getEmoji(EMOJI_DEFAULT_INDEX);
+    strncpy(currentEmoji_, defaultEmoji->name, sizeof(currentEmoji_) - 1);
+    currentEmoji_[sizeof(currentEmoji_) - 1] = '\0';
 }
 
 // ── begin ───────────────────────────────────────────────────────
@@ -273,18 +276,34 @@ int MOVAWebServer::parseMotors(JsonArrayConst motors, char* errBuf, size_t errBu
 // ── parseEmoji ──────────────────────────────────────────────────
 
 int MOVAWebServer::parseEmoji(const char* emojiStr, char* errBuf, size_t errBufLen) {
-    // Empty string → reset to 😐
-    if (!emojiStr || emojiStr[0] == '\0') {
-        memcpy(currentEmoji_, "\xF0\x9F\x98\x90", 5);
+    // Empty string → reset to default 😐
+    uint8_t idx = EMOJI_DEFAULT_INDEX;
+
+    if (emojiStr && emojiStr[0] != '\0') {
+        idx = findEmojiIndex(emojiStr);
+        if (idx == EMOJI_INVALID) {
+            snprintf(errBuf, errBufLen,
+                "{\"status\":\"error\",\"message\":\"Unknown emoji\"}");
+            return 400;
+        }
+    }
+
+    // Store emoji name for /status reporting
+    const EmojiEntry* entry = getEmoji(idx);
+    if (emojiStr && emojiStr[0] != '\0') {
+        // Preserve user input (with VS16 etc.), fall back to table name on overflow
+        if (normalizeEmoji(emojiStr, currentEmoji_, sizeof(currentEmoji_)) == 0) {
+            strncpy(currentEmoji_, entry->name, sizeof(currentEmoji_) - 1);
+            currentEmoji_[sizeof(currentEmoji_) - 1] = '\0';
+        }
     } else {
-        strncpy(currentEmoji_, emojiStr, sizeof(currentEmoji_) - 1);
+        strncpy(currentEmoji_, entry->name, sizeof(currentEmoji_) - 1);
         currentEmoji_[sizeof(currentEmoji_) - 1] = '\0';
     }
 
     DisplayCommand dcmd = {};
     dcmd.type = DisplayCommand::EMOJI;
-    // emojiIndex is used by Phase 6 sprite lookup; for now just store 0
-    dcmd.emojiIndex = 0;
+    dcmd.emojiIndex = idx;
 
     if (xQueueSend(displayQueue_, &dcmd, pdMS_TO_TICKS(100)) != pdTRUE) {
         snprintf(errBuf, errBufLen,
@@ -292,7 +311,7 @@ int MOVAWebServer::parseEmoji(const char* emojiStr, char* errBuf, size_t errBufL
         return 400;
     }
 
-    Serial.printf("[Web] Emoji set to: %s\n", currentEmoji_);
+    Serial.printf("[Web] Emoji set to: %s (index %d)\n", currentEmoji_, idx);
     return 0;
 }
 

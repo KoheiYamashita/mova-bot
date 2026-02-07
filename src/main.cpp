@@ -6,6 +6,7 @@
 #include "motor_controller.h"
 #include "camera.h"
 #include "display.h"
+#include "emoji_data.h"
 #include "audio_player.h"
 #include "web_server.h"
 
@@ -162,6 +163,12 @@ void setup() {
     showBootStatus("Connected", g_wifi.getIPAddress());
     printMemoryInfo();
     Serial.println("Boot complete.");
+
+    // Show default emoji after boot (via queue so taskDisplay draws it)
+    mova::DisplayCommand dcmd = {};
+    dcmd.type = mova::DisplayCommand::EMOJI;
+    dcmd.emojiIndex = mova::EMOJI_DEFAULT_INDEX;
+    xQueueSend(mova::g_displayQueue, &dcmd, pdMS_TO_TICKS(100));
 }
 
 void loop() {
