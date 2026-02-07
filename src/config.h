@@ -24,7 +24,12 @@ struct MotorPinMap {
     uint8_t pwm;
 };
 
-//                              in1  in2  pwm
+// PCA9685 チャンネルマッピング (docs/wiring.md 準拠)
+// 各モーター: IN1, IN2, PWM の順
+//   Motor 0: CH0=AIN1, CH1=AIN2, CH2=PWMA  (TB6612FNG #1 A側)
+//   Motor 1: CH3=BIN1, CH4=BIN2, CH5=PWMB  (TB6612FNG #1 B側)
+//   Motor 2: CH6=AIN1, CH7=AIN2, CH8=PWMA  (TB6612FNG #2 A側)
+//   Motor 3: CH9=BIN1, CH10=BIN2, CH11=PWMB (TB6612FNG #2 B側)
 constexpr MotorPinMap MOTOR_PINS[4] = {
     { 0,  1,  2},  // Motor 0
     { 3,  4,  5},  // Motor 1
@@ -68,6 +73,10 @@ constexpr uint8_t QUEUE_SIZE_DISPLAY = 4;
 
 // ── Watchdog ───────────────────────────────────────────────────
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 3000;  // NOTE: Phase 2 で実環境テスト時に調整
+
+// taskMotorControl のキュー待ちタイムアウト
+// WATCHDOG_TIMEOUT_MS の 1/6 以下に設定すること（最大発火遅延 = WATCHDOG_TIMEOUT_MS + MOTOR_WATCHDOG_POLL_MS）
+constexpr uint32_t MOTOR_WATCHDOG_POLL_MS = 500;
 
 // ── Network ────────────────────────────────────────────────────
 constexpr uint16_t HTTP_PORT   = 80;

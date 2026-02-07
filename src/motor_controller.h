@@ -2,28 +2,55 @@
 #define MOVA_MOTOR_CONTROLLER_H
 
 #include <cstdint>
+#include <Adafruit_PWMServoDriver.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/queue.h>
+
 #include "config.h"
 
 namespace mova {
 
-struct MotorCommand {
-    float vx;       // lateral velocity [-1.0, 1.0]
-    float vy;       // forward velocity [-1.0, 1.0]
-    float omega;    // rotational velocity [-1.0, 1.0]
+// ── Motor command types ─────────────────────────────────────────
+enum class MotorCommandType : uint8_t {
+    SET_MOTOR      = 0,  // 個別モーター設定
+    EMERGENCY_STOP = 1,  // 全モーター即時停止
 };
 
+struct MotorCommand {
+    MotorCommandType type;
+    uint8_t          motorId;    // 0-3 (SET_MOTOR 時のみ)
+    uint16_t         speed;      // 0-4095 (SET_MOTOR 時のみ。BRAKE 時は無視、内部で 4095 固定)
+    MotorDirection   direction;  // (SET_MOTOR 時のみ)
+};
+
+// ── Motor controller ────────────────────────────────────────────
 class MotorController {
 public:
-    bool begin();
+    bool begin(SemaphoreHandle_t i2cMutex);
     void setMotor(uint8_t index, MotorDirection direction, uint16_t speed);
     void emergencyStop();
-    void watchdog();
+    void feedWatchdog();
+    bool checkWatchdog();  // true = タイムアウトで停止した
+    void getMotorStates(MotorState states[4]) const;
+    bool isEnabled() const;
 
 private:
+    Adafruit_PWMServoDriver pca9685_{PCA9685_ADDRESS, Wire};
+    SemaphoreHandle_t i2cMutex_ = nullptr;
     bool initialized_ = false;
+    bool enabled_ = false;          // STBY 状態
+    MotorState states_[4] = {};
+    uint32_t lastCommandMs_ = 0;
+
+    void setChannelHigh(uint8_t ch);
+    void setChannelLow(uint8_t ch);
 };
 
 void taskMotorControl(void* param);
+
+// ── Global motor queue (defined in main.cpp) ────────────────────
+extern QueueHandle_t g_motorQueue;
 
 }  // namespace mova
 

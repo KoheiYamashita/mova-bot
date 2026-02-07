@@ -55,7 +55,7 @@ M5Stack Core S3 + PCA9685 + TB6612FNG x2 による4輪オムニホイール RC �
 **ファイル**: `src/motor_controller.h`, `src/motor_controller.cpp`
 
 - `MotorController` クラス:
-  - `begin()`: PCA9685 初期化 (I2C 400kHz, PWM 1000Hz), STBY ピン HIGH
+  - `begin()`: PCA9685 初期化 (I2C 400kHz, PWM 1000Hz), STBY ピン LOW（初期無効）、初回モーターコマンド受信時に HIGH
   - `setMotor(id, speed, direction)`: I2C Mutex 保護下で PWM + 方向ピン設定
   - `emergencyStop()`: 全モーター即時停止
   - `feedWatchdog()` / `checkWatchdog()`: 3秒タイムアウト

@@ -3,8 +3,13 @@
 
 #include "config.h"
 #include "wifi_config.h"
+#include "motor_controller.h"
 
 static mova::WiFiConfig g_wifi;
+static mova::MotorController g_motor;
+
+QueueHandle_t mova::g_motorQueue = nullptr;
+static SemaphoreHandle_t g_i2cMutex = nullptr;
 
 static void printBanner() {
     Serial.println("========================================");
@@ -30,36 +35,15 @@ static void showBootStatus(const char* line1, const char* line2 = nullptr) {
     }
 }
 
-static void probeI2C() {
-    Wire.begin(mova::I2C_SDA, mova::I2C_SCL);
-    Wire.beginTransmission(mova::PCA9685_ADDRESS);
-    uint8_t result = Wire.endTransmission();
-
-    switch (result) {
-        case 0:
-            Serial.printf("PCA9685 found at 0x%02X\n", mova::PCA9685_ADDRESS);
-            break;
-        case 2:
-            Serial.printf("PCA9685 NACK at 0x%02X (device not responding)\n", mova::PCA9685_ADDRESS);
-            break;
-        case 1:
-            Serial.printf("I2C error: data too long for buffer\n");
-            break;
-        case 3:
-            Serial.printf("I2C error: NACK on data transmit\n");
-            break;
-        case 4:
-            Serial.printf("I2C error: bus error (check SDA/SCL wiring)\n");
-            break;
-        default:
-            Serial.printf("I2C error: unknown code %d\n", result);
-            break;
-    }
-}
-
 static void printMemoryInfo() {
     Serial.printf("PSRAM: %d / %d bytes free\n", ESP.getFreePsram(), ESP.getPsramSize());
     Serial.printf("Heap:  %d bytes free\n", ESP.getFreeHeap());
+}
+
+static void fatalError(const char* msg) {
+    Serial.printf("[FATAL] %s\n", msg);
+    showBootStatus("FATAL ERROR", msg);
+    for (;;) { delay(1000); }
 }
 
 void setup() {
@@ -73,7 +57,6 @@ void setup() {
     M5.begin(cfg);
     printBanner();
     showBootStatus("MOVA Booting...");
-    probeI2C();
     printMemoryInfo();
 
     // --- WiFi connection sequence ---
@@ -94,6 +77,36 @@ void setup() {
     showBootStatus("Connected", g_wifi.getIPAddress());
     Serial.printf("IP: %s\n", g_wifi.getIPAddress());
 
+    // --- Motor initialization sequence ---
+    // 生成順序に依存関係あり: Mutex → begin() → Queue → Task
+    showBootStatus("Init Motors...");
+
+    // 1. Mutex 生成 (FATAL: 失敗時は停止)
+    g_i2cMutex = xSemaphoreCreateMutex();
+    if (!g_i2cMutex) {
+        fatalError("I2C Mutex alloc failed");
+    }
+
+    // 2. MotorController 初期化 (WARNING: 失敗時は続行)
+    if (!g_motor.begin(g_i2cMutex)) {
+        Serial.println("[Motor] WARNING: PCA9685 init failed - motor control disabled");
+        showBootStatus("Motor Init WARN", "PCA9685 not found");
+        delay(3000);
+    }
+
+    // 3. キュー生成 (FATAL: 失敗時は停止)
+    mova::g_motorQueue = xQueueCreate(mova::QUEUE_SIZE_MOTOR, sizeof(mova::MotorCommand));
+    if (!mova::g_motorQueue) {
+        fatalError("Motor queue alloc failed");
+    }
+
+    // 4. タスク起動
+    xTaskCreatePinnedToCore(
+        mova::taskMotorControl, "MotorCtrl",
+        mova::TASK_STACK_MOTOR, &g_motor,
+        mova::TASK_PRIORITY_MOTOR, nullptr, 0);
+
+    showBootStatus("Connected", g_wifi.getIPAddress());
     Serial.println("Boot complete.");
 }
 
