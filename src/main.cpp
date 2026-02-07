@@ -4,11 +4,18 @@
 #include "config.h"
 #include "wifi_config.h"
 #include "motor_controller.h"
+#include "display.h"
+#include "audio_player.h"
+#include "web_server.h"
 
 static mova::WiFiConfig g_wifi;
 static mova::MotorController g_motor;
+static mova::MOVAWebServer g_webServer;
 
-QueueHandle_t mova::g_motorQueue = nullptr;
+QueueHandle_t mova::g_motorQueue   = nullptr;
+QueueHandle_t mova::g_displayQueue = nullptr;
+QueueHandle_t mova::g_audioQueue   = nullptr;
+
 static SemaphoreHandle_t g_i2cMutex = nullptr;
 
 static void printBanner() {
@@ -100,13 +107,44 @@ void setup() {
         fatalError("Motor queue alloc failed");
     }
 
-    // 4. タスク起動
+    // 4. モータータスク起動
     xTaskCreatePinnedToCore(
         mova::taskMotorControl, "MotorCtrl",
         mova::TASK_STACK_MOTOR, &g_motor,
         mova::TASK_PRIORITY_MOTOR, nullptr, 0);
 
+    // --- Display / Audio queue + task setup ---
+    mova::g_displayQueue = xQueueCreate(mova::QUEUE_SIZE_DISPLAY, sizeof(mova::DisplayCommand));
+    if (!mova::g_displayQueue) {
+        fatalError("Display queue alloc failed");
+    }
+
+    mova::g_audioQueue = xQueueCreate(mova::QUEUE_SIZE_AUDIO, sizeof(mova::AudioCommand));
+    if (!mova::g_audioQueue) {
+        fatalError("Audio queue alloc failed");
+    }
+
+    xTaskCreatePinnedToCore(
+        mova::taskDisplay, "Display",
+        mova::TASK_STACK_DISPLAY, nullptr,
+        mova::TASK_PRIORITY_DISPLAY, nullptr, 1);
+
+    xTaskCreatePinnedToCore(
+        mova::taskAudioPlayback, "Audio",
+        mova::TASK_STACK_AUDIO, nullptr,
+        mova::TASK_PRIORITY_AUDIO, nullptr, 0);
+
+    // --- Web server ---
+    showBootStatus("Starting Web...");
+    g_webServer.init(mova::g_motorQueue, mova::g_displayQueue,
+                     mova::g_audioQueue, &g_motor);
+
+    if (!g_webServer.begin()) {
+        Serial.println("[Web] WARNING: Web server start failed");
+    }
+
     showBootStatus("Connected", g_wifi.getIPAddress());
+    printMemoryInfo();
     Serial.println("Boot complete.");
 }
 

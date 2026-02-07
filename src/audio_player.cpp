@@ -1,4 +1,5 @@
 #include "audio_player.h"
+#include <Arduino.h>
 
 namespace mova {
 
@@ -8,8 +9,15 @@ bool audioInit() {
 }
 
 void taskAudioPlayback(void* param) {
-    // TODO: Phase 5 - FreeRTOS task: receive AudioCommand from queue, play tones
     (void)param;
+    AudioCommand cmd;
+    for (;;) {
+        if (xQueueReceive(g_audioQueue, &cmd, portMAX_DELAY) == pdTRUE) {
+            Serial.printf("[Audio] Received %dHz %dbit %zu bytes (stub - discarding)\n",
+                          cmd.sampleRate, cmd.bits, cmd.pcmLength);
+            if (cmd.pcmData) free(cmd.pcmData);
+        }
+    }
 }
 
 }  // namespace mova

@@ -1,4 +1,5 @@
 #include "display.h"
+#include <Arduino.h>
 
 namespace mova {
 
@@ -13,8 +14,13 @@ void displayEmoji(uint8_t index) {
 }
 
 void taskDisplay(void* param) {
-    // TODO: Phase 6 - FreeRTOS task: receive DisplayCommand from queue, update screen
     (void)param;
+    DisplayCommand cmd;
+    for (;;) {
+        if (xQueueReceive(g_displayQueue, &cmd, portMAX_DELAY) == pdTRUE) {
+            Serial.printf("[Display] Received command type=%d (stub)\n", cmd.type);
+        }
+    }
 }
 
 }  // namespace mova

@@ -360,7 +360,7 @@ HTTP ハンドラー (TaskWebServer)
     │                                              ▼
     │                                           ディスプレイ全画面描画
     │
-    └─ audio あり  → Base64デコード → xStreamBufferSend(audioBuffer) → TaskAudioPlayback
+    └─ audio あり  → Base64デコード → PSRAM確保 → xQueueSend(audioQueue) → TaskAudioPlayback
                                                                           │
                                                                           │ I2S 出力 (AW88298)
                                                                           ▼

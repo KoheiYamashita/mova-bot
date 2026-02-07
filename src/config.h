@@ -1,6 +1,7 @@
 #ifndef MOVA_CONFIG_H
 #define MOVA_CONFIG_H
 
+#include <cstddef>
 #include <cstdint>
 
 namespace mova {
@@ -86,6 +87,10 @@ constexpr uint16_t STREAM_PORT = 81;
 // NOTE: CS ピンはボードリビジョンで異なる場合あり。SD 認識失敗時はここと
 //       SPI.begin() の要否を確認のこと (M5.begin() 後は通常不要)
 constexpr uint8_t SD_CS_PIN = 4;  // CoreS3 built-in SD slot
+
+// ── Web Server ───────────────────────────────────────────────────
+constexpr size_t MAX_JSON_BODY_SIZE   = 65536;  // POST /command 最大ボディサイズ (64KB)
+constexpr size_t MAX_AUDIO_BASE64_LEN = 49152;  // Base64 音声データ上限 (48KB → ~36KB PCM)
 
 // ── WiFi ───────────────────────────────────────────────────────
 constexpr const char* WIFI_CONFIG_PATH       = "/wifi.txt";
