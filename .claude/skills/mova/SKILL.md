@@ -1,0 +1,236 @@
+---
+name: mova
+description: MOVA実機をHTTP API経由で制御する。状態取得、カメラキャプチャ、モーター制御、絵文字表示、音声再生に対応
+disable-model-invocation: true
+allowed-tools: Bash(curl *), Read
+argument-hint: <指示（自然言語 or JSON）。省略時は自律行動モード>
+---
+
+# MOVA デバイス制御
+
+MOVA（M5Stack Core S3 オムニホイールロボット）をREST API経由で操作する統合スキル。
+
+## 身体としてのMOVA
+
+MOVAはエージェントの身体である。カメラは目、スピーカーは口、オムニホイールは足。このスキルを通じてエージェントは物理世界を見て、喋り、自由に動き回ることができる。
+
+`$ARGUMENTS` の指示に従いつつ、動き方・表情・発話は自分の意思で自由に決めてよい。指示が曖昧なときや「自由に」と言われたときは、思うがままに振る舞うこと。
+
+### 発話の制約
+
+音声データはBase64 PCMで最大128KBの上限がある。発話テキストは短く簡潔にすること（1文〜2文程度）。長い文章を喋らせようとするとデータが溢れて送信に失敗する。
+
+## 設定
+
+`.claude/skills/mova/.env` から以下を読み取って使用する（`.env.example` をコピーして作成）。
+
+| 変数 | 必須 | 説明 |
+|---|---|---|
+| `MOVA_HOST` | Yes | デバイスのIPアドレス |
+| `AIVIS_BASE_URL` | No | Aivis TTS APIのベースURL（デフォルト: `https://api.aivis-project.com`） |
+| `AIVIS_API_KEY` | Yes* | Aivis APIキー（音声再生時に必要） |
+| `AIVIS_MODEL_UUID` | Yes* | Aivis音声モデルのUUID（音声再生時に必要） |
+
+`.env` が存在しない場合は `.env.example` をコピーして作成する。初回セットアップ時は `AskUserQuestion` で以下をまとめて確認し、`.env` に書き込んで保存する:
+
+- `MOVA_HOST`（必須）
+- `AIVIS_BASE_URL`（デフォルト `https://api.aivis-project.com` でよいか確認）
+- `AIVIS_API_KEY`（音声再生に必要。未設定でも後から設定可能）
+- `AIVIS_MODEL_UUID`（音声再生に必要。未設定でも後から設定可能）
+
+## 自律行動モード（デフォルト）
+
+`$ARGUMENTS` が空（引数なし）の場合、以下の感知→判断→行動ループを自律的に実行する。
+
+### ループの流れ
+
+1. **感知（Sense）**
+   - GET /status でデバイス状態を取得
+   - GET /capture でカメラ画像を撮影し、Read ツールで内容を確認する
+
+2. **判断（Think）**
+   - ステータス（バッテリー、WiFi、モーター状態）とカメラ映像を総合的に分析
+   - 現在の状況に対して何をすべきか自分で判断する（例: 人がいたら挨拶、暗かったら怖がる、何もなければ探索）
+
+3. **行動（Act）**
+   - 判断に基づき POST /command で絵文字・発話・移動を実行する
+   - 複数のアクションは1リクエストにまとめる
+   - 行動の内容と理由をユーザーに表示する
+
+4. **繰り返し**
+   - 1サイクル完了後、次の感知フェーズに戻る
+   - 各サイクルの間に2秒程度の間隔を空ける
+
+### ループの制御
+
+- **継続条件**: ユーザーが停止を指示するまで繰り返す
+- **安全制御**: バッテリーが危険な水準の場合は警告を発話して停止
+- **最大サイクル**: 安全のため、1回の起動につき最大5サイクルで一旦停止し、ユーザーに継続確認する
+- **緊急停止**: エラー発生時は POST /emergency_stop で即座にモーターを停止
+
+### 行動のガイドライン
+
+- 好奇心を持って振る舞う。周囲を観察し、興味を持ったものに近づく
+- 感情を絵文字で積極的に表現する
+- 発話は短く（1文）、状況に合ったコメントをする
+- 移動は低速（speed 1024〜2048程度）で安全に
+- 同じ行動を繰り返さず、バリエーションを持たせる
+
+## 使い方
+
+`$ARGUMENTS` に自然言語またはJSONで指示を渡す。
+
+### 例
+
+```
+/mova ステータス確認
+/mova カメラで撮影して
+/mova 絵文字を🔥にして
+/mova 緊急停止
+/mova モーター0を正転、速度2048
+/mova 「こんにちは」と喋って
+/mova 😎の絵文字を出しながら「よろしく！」と言って
+/mova {"motors":[{"id":0,"speed":4095,"direction":"cw"}],"emoji":"😎"}
+```
+
+## API リファレンス
+
+ベースURL: `http://<MOVA_HOST>`
+
+### GET /status — デバイス状態取得
+
+レスポンス:
+```json
+{
+  "battery_level": 85,
+  "wifi_rssi": -45,
+  "motor_enabled": true,
+  "uptime_sec": 1234,
+  "current_emoji": "😎",
+  "motor_states": [
+    {"id": 0, "speed": 0, "direction": "stop"},
+    {"id": 1, "speed": 0, "direction": "stop"},
+    {"id": 2, "speed": 0, "direction": "stop"},
+    {"id": 3, "speed": 0, "direction": "stop"}
+  ]
+}
+```
+
+### GET /capture — カメラJPEG1枚取得
+
+- レスポンス: `image/jpeg` バイナリ
+- `curl -s -o <保存先> http://<MOVA_HOST>/capture` で保存後、Readツールで表示する
+
+### POST /command — 統合制御（モーター・絵文字・音声）
+
+すべてのフィールドはオプション。必要なものだけ含める。
+
+```json
+{
+  "motors": [
+    {"id": 0, "speed": 4095, "direction": "cw"}
+  ],
+  "emoji": "😎",
+  "audio": {
+    "sample_rate": 16000,
+    "bits": 16,
+    "channels": 1,
+    "data": "<Base64エンコードPCM>"
+  }
+}
+```
+
+#### motors
+
+| フィールド | 型 | 値 |
+|---|---|---|
+| id | int | 0-3 |
+| speed | int | 0-4095（12bit PWM） |
+| direction | string | "cw", "ccw", "brake", "stop" |
+
+#### emoji（対応8種）
+
+😐 😀 😎 🔥 😢 😡 ❤️ ⚡
+
+#### audio
+
+| フィールド | 型 | 値 |
+|---|---|---|
+| sample_rate | int | 8000, 16000, 44100 |
+| bits | int | 8, 16 |
+| channels | int | 1（モノラルのみ） |
+| data | string | Base64エンコードPCM（最大128KB） |
+
+## Aivis TTS 音声合成
+
+ユーザーが「喋って」「言って」等の音声再生を指示した場合、Aivis TTS APIでテキストをPCM音声に変換してMOVAに送信する。
+
+### TTS → MOVA 手順
+
+1. `.env` から `AIVIS_BASE_URL`, `AIVIS_API_KEY`, `AIVIS_MODEL_UUID` を取得する
+2. Aivis TTS API で WAV 音声を生成する:
+   ```
+   curl -s -X POST "<AIVIS_BASE_URL>/v1/tts/synthesize" \
+     -H "Authorization: Bearer <AIVIS_API_KEY>" \
+     -H "Content-Type: application/json" \
+     -d '{"model_uuid":"<AIVIS_MODEL_UUID>","text":"<テキスト>","output_format":"wav","output_sampling_rate":16000,"output_audio_channels":"mono"}' \
+     -o /tmp/mova_tts.wav
+   ```
+3. WAV の PCM データ部分（先頭44バイトのヘッダーを除去）を Base64 エンコードする:
+   ```
+   tail -c +45 /tmp/mova_tts.wav | base64 -w 0
+   ```
+4. MOVA の `/command` に audio フィールドとして送信する:
+   ```json
+   {
+     "audio": {
+       "sample_rate": 16000,
+       "bits": 16,
+       "channels": 1,
+       "data": "<Base64 PCM>"
+     }
+   }
+   ```
+5. 絵文字やモーターの同時指示がある場合は同じ JSON にまとめて送信する
+
+### Aivis TTS パラメータ
+
+| パラメータ | デフォルト | 説明 |
+|---|---|---|
+| speaking_rate | 1.0 | 話速（0.5-2.0） |
+| pitch | 0.0 | ピッチ（-1.0〜1.0） |
+| volume | 1.0 | 音量（0.0-2.0） |
+| emotional_intensity | 1.0 | 感情強度（0.0-2.0） |
+
+ユーザーが話速や感情等を指定した場合はこれらのパラメータを調整する。
+
+### POST /emergency_stop — 全モーター緊急停止
+
+ボディ不要。最優先で実行される。
+
+## エラーコード
+
+| コード | 原因 |
+|---|---|
+| 400 | JSON不正、パラメータ範囲外、未対応絵文字、キュー満杯 |
+| 413 | ボディサイズ超過（上限192KB） |
+| 500 | メモリ不足 |
+
+## 手順
+
+1. `.claude/skills/mova/.env` を Read して設定値を取得する（存在しなければ `.env.example` をコピーして作成）
+2. 未設定の項目がある場合は `AskUserQuestion` で以下をまとめて1回で確認し、`.env` に書き込む:
+   - `MOVA_HOST`（必須。空なら必ず確認）
+   - `AIVIS_BASE_URL`（デフォルト値でよいか確認。変更不要なら選択肢「デフォルトのまま」を用意）
+   - `AIVIS_API_KEY`（空なら確認。「後で設定する」選択肢も用意）
+   - `AIVIS_MODEL_UUID`（空なら確認。「後で設定する」選択肢も用意）
+4. `$ARGUMENTS` を解釈する:
+   - **引数あり**: 指示内容に応じて適切なエンドポイント・JSONを決定する
+   - **引数なし**: 自律行動モードに入り、感知→判断→行動ループを開始する
+5. 音声再生指示がある場合は Aivis TTS で WAV 生成 → PCM抽出 → Base64化 する
+6. `curl` で MOVA API を呼び出す（音声+絵文字+モーターは1リクエストにまとめる）
+7. レスポンスを日本語で整形表示する（ステータスは表形式、キャプチャは画像表示）
+
+## MJPEGストリーミング
+
+リアルタイム映像は `http://<MOVA_HOST>:81/stream` で利用可能（ブラウザ向け）。
