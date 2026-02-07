@@ -1,15 +1,19 @@
 #ifndef MOVA_CAMERA_H
 #define MOVA_CAMERA_H
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace mova {
 
 bool cameraInit();
-uint8_t* cameraCaptureJpeg(size_t* outLen);
+bool cameraIsInitialized();
+
+// JPEG キャプチャ。malloc で確保されたバッファを返す (呼び出し側が free する)
+// quality: 10-63 (0 = デフォルト CAM_DEFAULT_QUALITY)
+uint8_t* cameraCaptureJpeg(size_t* outLen, uint8_t quality = 0);
+
 bool cameraStreamServerStart();
-void taskCameraStream(void* param);
 
 }  // namespace mova
 

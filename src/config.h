@@ -97,6 +97,29 @@ constexpr const char* WIFI_CONFIG_PATH       = "/wifi.txt";
 constexpr uint32_t    WIFI_CONNECT_TIMEOUT_MS = 10000;  // Single connection attempt timeout
 constexpr uint32_t    WIFI_RETRY_INTERVAL_MS  = 5000;
 
+// ── Camera (GC0308 on Core S3) ────────────────────────────────
+constexpr int CAM_PIN_PWDN  = -1;
+constexpr int CAM_PIN_RESET = -1;
+constexpr int CAM_PIN_XCLK  = -1;   // Core S3: XCLK 未接続
+constexpr int CAM_PIN_SIOD  = 12;   // 内部 I2C SDA (AXP2101/AW9523 と共有)
+constexpr int CAM_PIN_SIOC  = 11;   // 内部 I2C SCL
+constexpr int CAM_PIN_D7    = 47;
+constexpr int CAM_PIN_D6    = 48;
+constexpr int CAM_PIN_D5    = 16;
+constexpr int CAM_PIN_D4    = 15;
+constexpr int CAM_PIN_D3    = 42;
+constexpr int CAM_PIN_D2    = 41;
+constexpr int CAM_PIN_D1    = 40;
+constexpr int CAM_PIN_D0    = 39;
+constexpr int CAM_PIN_VSYNC = 46;
+constexpr int CAM_PIN_HREF  = 38;
+constexpr int CAM_PIN_PCLK  = 45;
+
+constexpr int      CAM_XCLK_FREQ_HZ    = 20000000;   // 20MHz
+constexpr uint8_t  CAM_DEFAULT_QUALITY  = 12;          // JPEG quality (10-63, 低=高画質)
+constexpr uint32_t CAM_FRAME_DELAY_MS   = 33;          // ~30fps キャップ
+constexpr uint32_t CAM_HTTPD_STACK_SIZE = 16384;       // httpd タスクスタック (frame2jpg が大きなスタックを要求)
+
 }  // namespace mova
 
 #endif  // MOVA_CONFIG_H

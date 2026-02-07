@@ -446,7 +446,7 @@ void MOVAWebServer::handleStatus(AsyncWebServerRequest* request) {
     request->send(resp);
 }
 
-// ── handleCapture (D1: stub → 503) ──────────────────────────────
+// ── handleCapture ────────────────────────────────────────────────
 
 void MOVAWebServer::handleCapture(AsyncWebServerRequest* request) {
     size_t jpegLen = 0;
@@ -457,11 +457,14 @@ void MOVAWebServer::handleCapture(AsyncWebServerRequest* request) {
         return;
     }
 
-    // Phase 4: return JPEG image
-    // NOTE: When implementing Phase 4, ensure cameraCaptureJpeg() buffer is freed
-    //       (e.g. esp_camera_fb_return()) after sending
     auto* resp = request->beginResponse(200, "image/jpeg", jpeg, jpegLen);
     addCorsHeaders(resp);
+
+    // onDisconnect で JPEG バッファを解放 (非同期送信完了後)
+    request->onDisconnect([jpeg]() {
+        free(jpeg);
+    });
+
     request->send(resp);
 }
 

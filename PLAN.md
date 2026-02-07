@@ -37,7 +37,8 @@ M5Stack Core S3 + PCA9685 + TB6612FNG x2 による4輪オムニホイール RC �
 **ファイル**: `platformio.ini`, 全ソースファイルの空スケルトン, `src/main.cpp`（最小起動確認）
 
 - PlatformIO 設定: board=`m5stack-cores3`, framework=`arduino`
-- ライブラリ: M5Unified, esp32-camera, ESPAsyncWebServer, AsyncTCP, Adafruit PWM Servo Driver, ArduinoJson
+- ライブラリ: M5Unified, ESPAsyncWebServer, AsyncTCP, Adafruit PWM Servo Driver, ArduinoJson
+  - `esp_camera.h`, `img_converters.h`, `esp_http_server.h` は ESP-IDF コンポーネントとして Arduino フレームワークに含まれており `lib_deps` 追加不要
 - ビルドフラグ: PSRAM有効, USB CDC, SPIFFS
 - **検証**: `pio run` でビルド成功、デバイスにフラッシュして "MOVA Booting..." 表示
 
@@ -80,14 +81,23 @@ M5Stack Core S3 + PCA9685 + TB6612FNG x2 による4輪オムニホイール RC �
 - **検証**: curl で全エンドポイントテスト (正常系 + 異常系)
 
 ### Phase 4: カメラ / MJPEG ストリーミング
-**ファイル**: `src/camera.h`, `src/camera.cpp`
+**ファイル**: `src/camera.h`, `src/camera.cpp`, `src/web_server.cpp`(handleCapture 修正), `src/main.cpp`(ブートシーケンス追加)
 
-- `cameraInit()`: GC0308 ピン設定, RGB565, PSRAM フレームバッファ, ダブルバッファ
-- `cameraCaptureJpeg()`: フレーム取得 → `frame2jpg()` → JPEG バッファ返却
+- `cameraInit()`: `M5.In_I2C.release()` で内部 I2C 解放後、GC0308 ピン設定 (XCLK=-1), RGB565, PSRAM ダブルバッファ, `esp_camera_init()`
+  - **センサー設定は AWB のみ** (`set_whitebal`, `set_awb_gain`)。`set_brightness`/`set_contrast`/`set_exposure_ctrl` 等は esp32-camera の GC0308 ドライバのバグにより画像が壊れるため使用不可
+  - `gob_GC0308` 補完ライブラリを評価したが、同様に画像破壊を引き起こしたため不採用
+- `cameraIsInitialized()`: 初期化状態の問い合わせ
+- `cameraCaptureJpeg(outLen, quality)`: フレーム取得 → `frame2jpg()` → malloc 済み JPEG バッファ返却 (呼び出し側が free)
+  - `resolveQuality()` ヘルパーで quality クランプ (0=デフォルト, 範囲 10-63)
+  - `captureFrameAsJpeg()` ヘルパーで fb_get → frame2jpg → fb_return を共通化
 - `cameraStreamServerStart()`: ESP-IDF httpd (port 81) で MJPEG ストリーム配信
-  - `multipart/x-mixed-replace` boundary フレーミング
+  - `multipart/x-mixed-replace;boundary=frame` フレーミング
   - ~30fps キャップ (`vTaskDelay(33ms)`)
-- **検証**: ブラウザで `http://<ip>:81/stream` 表示、`/capture` で JPEG ダウンロード
+  - クエリパラメータ: `quality` (10-63), `resolution` (QQVGA/QVGA/VGA)
+  - 多重起動ガード、`httpd_register_uri_handler` 戻り値チェック
+  - **独立 FreeRTOS タスク不要** — httpd が内部でタスク管理
+- `handleCapture()` (web_server.cpp): `onDisconnect` コールバックで JPEG バッファ解放 (非同期送信対応)
+- **検証**: `curl /capture` で有効な JPEG 取得、ブラウザで `http://<ip>:81/stream` 表示
 
 ### Phase 5: ディスプレイ / 絵文字
 **ファイル**: `src/display.h`, `src/display.cpp`, `src/emoji_data.h`

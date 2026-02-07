@@ -297,7 +297,8 @@ GET /status
 | 項目 | 選定 |
 |------|------|
 | フレームワーク | Arduino (ESP32) |
-| ライブラリ | M5Unified, ESP32 Camera, ESPAsyncWebServer, AsyncTCP, Adafruit PWMServoDriver (PCA9685), SD |
+| ライブラリ | M5Unified, ESPAsyncWebServer, AsyncTCP, Adafruit PWMServoDriver (PCA9685), ArduinoJson, SD |
+| カメラ / ストリーム | `esp_camera.h`, `img_converters.h`, `esp_http_server.h` (ESP-IDF 内蔵、`lib_deps` 不要) |
 | IDE | PlatformIO (推奨) or Arduino IDE |
 
 ### 5.2 タスク構成 (FreeRTOS)
@@ -309,7 +310,7 @@ ESP32-S3 のデュアルコアを活用し、FreeRTOS タスクで並行処理�
 | `TaskMotorControl` | Core 0 | 高 | モーター制御 (PCA9685 I2C 通信) |
 | `TaskAudioPlayback` | Core 0 | 中 | 音声バッファ再生 (I2S 出力) |
 | `TaskWebServer` | Core 1 | 高 | HTTP サーバー (REST API) |
-| `TaskCameraStream` | Core 1 | 中 | カメラキャプチャ・MJPEG配信 |
+| (httpd 内部タスク) | Core 1 | — | MJPEG ストリーム配信 (ESP-IDF httpd が管理、明示的タスク生成不要) |
 | `TaskDisplay` | Core 1 | 低 | 絵文字描画・UI更新 |
 
 ### 5.3 ソースコード構成
@@ -427,3 +428,5 @@ SPIFFS に簡易 Web UI を格納し、ブラウザからもアクセス可能�
 - MJPEG ストリーミングと REST API 制御の同時処理はデュアルコアで分散
 - PCA9685 の I2C 通信速度がモーター制御のレイテンシに影響する (400kHz Fast Mode で約 1ms/コマンド)
 - 音声はストリーミング再生ではなく、全データ受信後に一括再生する方式とする（リアルタイム音声通話は非対応）
+- カメラ (GC0308) の esp32-camera ドライバには `set_brightness`/`set_contrast`/`set_exposure_ctrl` 等のセンサー設定関数にバグがあり、呼び出すと画像が破壊される。AWB (`set_whitebal`, `set_awb_gain`) のみ安全に使用可能。画質調整が必要な場合は JPEG quality パラメータ (10-63) で対応する
+- `M5.In_I2C.release()` でカメラ SCCB 用に内部 I2C バスを解放する。これにより AXP2101 等の内部デバイスが不安定になる可能性がある

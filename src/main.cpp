@@ -4,6 +4,7 @@
 #include "config.h"
 #include "wifi_config.h"
 #include "motor_controller.h"
+#include "camera.h"
 #include "display.h"
 #include "audio_player.h"
 #include "web_server.h"
@@ -84,6 +85,14 @@ void setup() {
     showBootStatus("Connected", g_wifi.getIPAddress());
     Serial.printf("IP: %s\n", g_wifi.getIPAddress());
 
+    // --- Camera initialization ---
+    showBootStatus("Init Camera...");
+    if (!mova::cameraInit()) {
+        Serial.println("[Camera] WARNING: Camera init failed - streaming disabled");
+        showBootStatus("Camera WARN", "Init failed");
+        delay(2000);
+    }
+
     // --- Motor initialization sequence ---
     // 生成順序に依存関係あり: Mutex → begin() → Queue → Task
     showBootStatus("Init Motors...");
@@ -141,6 +150,13 @@ void setup() {
 
     if (!g_webServer.begin()) {
         Serial.println("[Web] WARNING: Web server start failed");
+    }
+
+    // --- Stream server (port 81) ---
+    if (mova::cameraIsInitialized()) {
+        if (!mova::cameraStreamServerStart()) {
+            Serial.println("[Camera] WARNING: Stream server start failed");
+        }
     }
 
     showBootStatus("Connected", g_wifi.getIPAddress());
