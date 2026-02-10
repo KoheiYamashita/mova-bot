@@ -1,4 +1,5 @@
 #include "audio_player.h"
+#include "mic_recorder.h"
 #include "config.h"
 #include <M5Unified.h>
 
@@ -41,6 +42,14 @@ void taskAudioPlayback(void* param) {
             continue;
         }
 
+        // Acquire I2S mutex (may block if mic is recording)
+        if (g_i2sOwnerMutex &&
+            xSemaphoreTake(g_i2sOwnerMutex, pdMS_TO_TICKS(6000)) != pdTRUE) {
+            Serial.println("[Audio] I2S busy (mic recording) - discarding");
+            if (cmd.pcmData) free(cmd.pcmData);
+            continue;
+        }
+
         // Free previous buffer if still tracked
         if (currentBuffer) {
             M5.Speaker.stop(0);
@@ -56,6 +65,7 @@ void taskAudioPlayback(void* param) {
         }
 
         if (!cmd.pcmData || cmd.pcmLength == 0) {
+            if (g_i2sOwnerMutex) xSemaphoreGive(g_i2sOwnerMutex);
             continue;
         }
 
@@ -75,6 +85,7 @@ void taskAudioPlayback(void* param) {
             Serial.println("[Audio] playRaw() failed");
             free(currentBuffer);
             currentBuffer = nullptr;
+            if (g_i2sOwnerMutex) xSemaphoreGive(g_i2sOwnerMutex);
             continue;
         }
 
@@ -94,6 +105,8 @@ void taskAudioPlayback(void* param) {
             free(currentBuffer);
             currentBuffer = nullptr;
         }
+
+        if (g_i2sOwnerMutex) xSemaphoreGive(g_i2sOwnerMutex);
     }
 }
 

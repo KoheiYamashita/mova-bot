@@ -8,6 +8,7 @@
 #include "display.h"
 #include "emoji_data.h"
 #include "audio_player.h"
+#include "mic_recorder.h"
 #include "web_server.h"
 
 static mova::WiFiConfig g_wifi;
@@ -147,6 +148,18 @@ void setup() {
         mova::taskAudioPlayback, "Audio",
         mova::TASK_STACK_AUDIO, nullptr,
         mova::TASK_PRIORITY_AUDIO, nullptr, 0);
+
+    // --- Microphone initialization ---
+    showBootStatus("Init Mic...");
+    if (mova::micInit()) {
+        xTaskCreatePinnedToCore(
+            mova::taskMicRecording, "Mic",
+            mova::TASK_STACK_MIC, nullptr,
+            mova::TASK_PRIORITY_MIC, nullptr, 0);
+        Serial.println("[Mic] Recording task started");
+    } else {
+        Serial.println("[Mic] WARNING: Mic init failed - recording disabled");
+    }
 
     // --- Web server ---
     showBootStatus("Starting Web...");

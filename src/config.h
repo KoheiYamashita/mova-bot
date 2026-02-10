@@ -123,6 +123,14 @@ constexpr uint8_t  CAM_DEFAULT_QUALITY  = 12;          // JPEG quality (10-63, �
 constexpr uint32_t CAM_FRAME_DELAY_MS   = 33;          // ~30fps キャップ
 constexpr uint32_t CAM_HTTPD_STACK_SIZE = 16384;       // httpd タスクスタック (frame2jpg が大きなスタックを要求)
 
+// ── Microphone ──────────────────────────────────────────────────
+constexpr uint32_t TASK_STACK_MIC          = 8192;
+constexpr uint8_t  TASK_PRIORITY_MIC       = 3;
+constexpr uint8_t  QUEUE_SIZE_MIC          = 1;      // 同時録音は 1 つのみ
+constexpr float    MIC_MIN_DURATION        = 0.5f;   // 秒
+constexpr float    MIC_MAX_DURATION        = 3.0f;   // 秒 (Base64 後 ~128KB 以内)
+constexpr uint32_t MIC_DEFAULT_SAMPLE_RATE = 16000;
+
 }  // namespace mova
 
 #endif  // MOVA_CONFIG_H

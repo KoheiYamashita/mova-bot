@@ -33,6 +33,7 @@ private:
     void handleEmergencyStop(AsyncWebServerRequest* request);
     void handleStatus(AsyncWebServerRequest* request);
     void handleCapture(AsyncWebServerRequest* request);
+    void handleMicRecord(AsyncWebServerRequest* request);
 
     // /command sub-parsers (return 0 on success, HTTP error code on failure)
     int parseMotors(JsonArrayConst motors, char* errBuf, size_t errBufLen);

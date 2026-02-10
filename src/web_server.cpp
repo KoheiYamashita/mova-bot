@@ -10,6 +10,7 @@
 #include "display.h"
 #include "emoji_data.h"
 #include "audio_player.h"
+#include "mic_recorder.h"
 #include "camera.h"
 #include <ArduinoJson.h>
 
@@ -95,6 +96,37 @@ bool MOVAWebServer::begin() {
             memcpy(static_cast<uint8_t*>(request->_tempObject) + index, data, len);
 
             // Last chunk: NUL-terminate
+            if (index + len == total) {
+                static_cast<uint8_t*>(request->_tempObject)[total] = '\0';
+            }
+        }
+    );
+
+    // --- POST /mic/record ---
+    server_.on("/mic/record", HTTP_POST,
+        [this](AsyncWebServerRequest* request) {
+            handleMicRecord(request);
+        },
+        nullptr,  // onUpload
+        // onBody: accumulate (small JSON, max 256 bytes)
+        [](AsyncWebServerRequest* request, uint8_t* data, size_t len,
+           size_t index, size_t total) {
+            if (total > 256) {
+                if (request->_tempObject && request->_tempObject != BODY_TOO_LARGE_SENTINEL) {
+                    free(request->_tempObject);
+                }
+                request->_tempObject = BODY_TOO_LARGE_SENTINEL;
+                return;
+            }
+            if (request->_tempObject == BODY_TOO_LARGE_SENTINEL) return;
+
+            if (index == 0) {
+                request->_tempObject = malloc(total + 1);
+                if (!request->_tempObject) return;
+            }
+            if (!request->_tempObject) return;
+
+            memcpy(static_cast<uint8_t*>(request->_tempObject) + index, data, len);
             if (index + len == total) {
                 static_cast<uint8_t*>(request->_tempObject)[total] = '\0';
             }
@@ -496,6 +528,138 @@ void MOVAWebServer::handleCapture(AsyncWebServerRequest* request) {
         free(jpeg);
     });
 
+    request->send(resp);
+}
+
+// ── handleMicRecord ──────────────────────────────────────────────
+
+void MOVAWebServer::handleMicRecord(AsyncWebServerRequest* request) {
+    void* tmp = request->_tempObject;
+    request->_tempObject = nullptr;
+
+    if (tmp == BODY_TOO_LARGE_SENTINEL) {
+        sendJson(request, 413, "{\"status\":\"error\",\"message\":\"Payload too large\"}");
+        return;
+    }
+
+    // Parse body (optional — defaults used if empty)
+    float duration = 1.0f;
+    uint32_t sampleRate = MIC_DEFAULT_SAMPLE_RATE;
+
+    if (tmp) {
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, static_cast<char*>(tmp));
+        free(tmp);
+        tmp = nullptr;
+
+        if (err) {
+            char msg[96];
+            snprintf(msg, sizeof(msg),
+                "{\"status\":\"error\",\"message\":\"Invalid JSON: %s\"}", err.c_str());
+            sendJson(request, 400, msg);
+            return;
+        }
+
+        duration = doc["duration"] | 1.0f;
+        sampleRate = doc["sample_rate"] | MIC_DEFAULT_SAMPLE_RATE;
+    }
+
+    // Validate parameters
+    if (duration < MIC_MIN_DURATION) duration = MIC_MIN_DURATION;
+    if (duration > MIC_MAX_DURATION) duration = MIC_MAX_DURATION;
+
+    if (sampleRate != 16000) {
+        sendJson(request, 400,
+            "{\"status\":\"error\",\"message\":\"Only sample_rate 16000 is supported\"}");
+        return;
+    }
+
+    // Check mic queue exists
+    if (!g_micQueue) {
+        sendJson(request, 503,
+            "{\"status\":\"error\",\"message\":\"Mic not initialized\"}");
+        return;
+    }
+
+    // Create per-request semaphore
+    SemaphoreHandle_t doneSem = xSemaphoreCreateBinary();
+    if (!doneSem) {
+        sendJson(request, 500,
+            "{\"status\":\"error\",\"message\":\"Semaphore alloc failed\"}");
+        return;
+    }
+
+    MicCommand cmd = {};
+    cmd.duration   = duration;
+    cmd.sampleRate = sampleRate;
+    cmd.doneSem    = doneSem;
+
+    if (xQueueSend(g_micQueue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+        vSemaphoreDelete(doneSem);
+        sendJson(request, 503,
+            "{\"status\":\"error\",\"message\":\"Recording already in progress\"}");
+        return;
+    }
+
+    // Wait for recording to complete
+    uint32_t timeoutMs = static_cast<uint32_t>(duration * 1000) + 2000;
+    if (xSemaphoreTake(doneSem, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+        vSemaphoreDelete(doneSem);
+        sendJson(request, 504,
+            "{\"status\":\"error\",\"message\":\"Recording timeout\"}");
+        return;
+    }
+    vSemaphoreDelete(doneSem);
+
+    if (!g_micResult.success) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+            "{\"status\":\"error\",\"message\":\"%s\"}", g_micResult.errorMsg);
+        sendJson(request, 500, msg);
+        return;
+    }
+
+    // Base64 encode PCM data
+    size_t b64Len = 0;
+    mbedtls_base64_encode(nullptr, 0, &b64Len,
+        reinterpret_cast<const unsigned char*>(g_micResult.pcmData),
+        g_micResult.pcmBytes);
+
+    char* b64Buf = static_cast<char*>(ps_malloc(b64Len + 1));
+    if (!b64Buf) {
+        free(g_micResult.pcmData);
+        g_micResult.pcmData = nullptr;
+        sendJson(request, 500,
+            "{\"status\":\"error\",\"message\":\"Base64 alloc failed\"}");
+        return;
+    }
+
+    size_t actualB64Len = 0;
+    mbedtls_base64_encode(
+        reinterpret_cast<unsigned char*>(b64Buf), b64Len, &actualB64Len,
+        reinterpret_cast<const unsigned char*>(g_micResult.pcmData),
+        g_micResult.pcmBytes);
+    b64Buf[actualB64Len] = '\0';
+
+    free(g_micResult.pcmData);
+    g_micResult.pcmData = nullptr;
+
+    // Build JSON response (use PSRAM for large audio payload)
+    static PsramAllocator psramAlloc;
+    JsonDocument respDoc(&psramAlloc);
+    respDoc["status"]      = "ok";
+    respDoc["rms"]         = g_micResult.rms;
+    respDoc["peak"]        = g_micResult.peak;
+    respDoc["duration"]    = g_micResult.actualDuration;
+    respDoc["sample_rate"] = g_micResult.sampleRate;
+    respDoc["audio"]       = b64Buf;
+
+    String body;
+    serializeJson(respDoc, body);
+    free(b64Buf);
+
+    auto* resp = request->beginResponse(200, "application/json", body);
+    addCorsHeaders(resp);
     request->send(resp);
 }
 

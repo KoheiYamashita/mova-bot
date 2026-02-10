@@ -5,8 +5,13 @@
 #include <cstddef>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 namespace mova {
+
+// I2S owner mutex: shared between audio playback and mic recording.
+// Speaker and mic share the same I2S port on Core S3 and cannot run simultaneously.
+extern SemaphoreHandle_t g_i2sOwnerMutex;
 
 struct AudioCommand {
     uint16_t sampleRate;  // Hz (8000, 16000, 44100)
