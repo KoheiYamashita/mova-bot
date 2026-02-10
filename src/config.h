@@ -28,14 +28,14 @@ struct MotorPinMap {
 // PCA9685 チャンネルマッピング (docs/wiring.md 準拠)
 // 各モーター: IN1, IN2, PWM の順
 //   Motor 0: CH0=AIN1, CH1=AIN2, CH2=PWMA  (TB6612FNG #1 A側)
-//   Motor 1: CH3=BIN1, CH4=BIN2, CH5=PWMB  (TB6612FNG #1 B側)
+//   Motor 1: CH4=BIN2, CH3=BIN1, CH5=PWMB  (TB6612FNG #1 B側 — B出力が B02,B01 逆順のため IN1/IN2 swap)
 //   Motor 2: CH6=AIN1, CH7=AIN2, CH8=PWMA  (TB6612FNG #2 A側)
-//   Motor 3: CH9=BIN1, CH10=BIN2, CH11=PWMB (TB6612FNG #2 B側)
+//   Motor 3: CH10=BIN2, CH9=BIN1, CH11=PWMB (TB6612FNG #2 B側 — B出力が B02,B01 逆順のため IN1/IN2 swap)
 constexpr MotorPinMap MOTOR_PINS[4] = {
-    { 0,  1,  2},  // Motor 0
-    { 3,  4,  5},  // Motor 1
-    { 6,  7,  8},  // Motor 2
-    { 9, 10, 11},  // Motor 3
+    { 0,  1,  2},  // Motor 0 (A側: そのまま)
+    { 4,  3,  5},  // Motor 1 (B側: IN1/IN2 swapped)
+    { 6,  7,  8},  // Motor 2 (A側: そのまま)
+    {10,  9, 11},  // Motor 3 (B側: IN1/IN2 swapped)
 };
 
 // TB6612FNG standby channels
