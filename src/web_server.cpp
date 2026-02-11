@@ -12,6 +12,7 @@
 #include "audio_player.h"
 #include "mic_recorder.h"
 #include "camera.h"
+#include "obstacle_sensor.h"
 #include <ArduinoJson.h>
 
 namespace mova {
@@ -499,6 +500,38 @@ void MOVAWebServer::handleStatus(AsyncWebServerRequest* request) {
         mo["id"]        = i;
         mo["speed"]     = states[i].speed;
         mo["direction"] = directionToString(states[i].direction);
+    }
+
+    // Obstacle sensors
+    ObstacleSnapshot snap = getObstacleSnapshot();
+    JsonObject sensors = doc["sensors"].to<JsonObject>();
+    sensors["front_mm"] = snap.distance_mm[0];
+    sensors["right_mm"] = snap.distance_mm[1];
+    sensors["rear_mm"]  = snap.distance_mm[2];
+    sensors["left_mm"]  = snap.distance_mm[3];
+    sensors["healthy"]  = snap.sensorHealthy;
+    sensors["obstacle_detected"] = (snap.blocked != 0);
+
+    if (snap.sensorError) {
+        JsonArray errors = sensors["errors"].to<JsonArray>();
+        for (int i = 0; i < 4; i++) {
+            if (snap.sensorError & (1 << i))
+                errors.add(sensorDirectionToString(static_cast<SensorDirection>(i)));
+        }
+    }
+
+    JsonArray dirs = sensors["obstacle_directions"].to<JsonArray>();
+    for (int i = 0; i < 4; i++) {
+        if (snap.blocked & (1 << i))
+            dirs.add(sensorDirectionToString(static_cast<SensorDirection>(i)));
+    }
+
+    // Emergency stop history
+    if (snap.lastStopUptime_sec > 0) {
+        JsonObject lastStop = doc["last_emergency_stop"].to<JsonObject>();
+        lastStop["sensor"]      = sensorDirectionToString(static_cast<SensorDirection>(snap.lastStopDirection));
+        lastStop["distance_mm"] = snap.lastStopDistance_mm;
+        lastStop["uptime_sec"]  = snap.lastStopUptime_sec;
     }
 
     String body;

@@ -133,6 +133,32 @@ MOVAは物理的に動く機械であるため、以下の安全原則を常に�
 /mova {"motors":[{"id":0,"speed":4095,"direction":"cw"}],"emoji":"😎"}
 ```
 
+## オムニホイール運動学テーブル
+
+モーターコマンドを組み立てる際のリファレンス。Motor配置: 0=FL, 1=FR, 2=RL, 3=RR (X配置)。
+
+| 動作     | M0(FL) | M1(FR) | M2(RL) | M3(RR) |
+|----------|--------|--------|--------|--------|
+| 前進     | CW     | CCW    | CW     | CCW    |
+| 後退     | CCW    | CW     | CCW    | CW     |
+| 右移動   | CW     | CW     | CCW    | CCW    |
+| 左移動   | CCW    | CCW    | CW     | CW     |
+| 右回転   | CW     | CW     | CW     | CW     |
+| 左回転   | CCW    | CCW    | CCW    | CCW    |
+
+> 実機でズレがある場合は `MOTOR_CONTRIB_CW` (config.h) を調整する。
+
+## 障害物検知
+
+4方向 VL53L0X ToF センサーによる自動障害物検知が動作している。
+
+- **閾値**: 150mm 以下で自動緊急停止が発動
+- **方向ブロック**: 障害物がある方向へのモーターコマンドはファームウェアが自動拒否する。反対方向への移動や回転は許可される
+- **Fail-Closed**: センサーが1つでも異常（初期化失敗 or タイムアウト連続3回）になると、全モーター動作がブロックされる。センサー復帰で自動再開。ただしセンサーモジュール自体が未接続（obstacleInit失敗）の場合はモーター動作を許可する（Fail-Open）
+- **`/status` の `sensors` フィールド** で各方向の距離・障害物の有無・センサー健全性を確認できる
+
+AIは `/status` の `sensors` データを判断材料として、障害物を回避する経路を選択できる。ファームウェアのブロックは最後の安全ネットであり、AIレベルでも障害物を考慮した行動をすべき。
+
 ## API リファレンス
 
 ベースURL: `http://<MOVA_HOST>`
@@ -152,11 +178,44 @@ MOVAは物理的に動く機械であるため、以下の安全原則を常に�
     {"id": 1, "speed": 0, "direction": "stop"},
     {"id": 2, "speed": 0, "direction": "stop"},
     {"id": 3, "speed": 0, "direction": "stop"}
-  ]
+  ],
+  "sensors": {
+    "front_mm": 234,
+    "right_mm": 1200,
+    "rear_mm": 89,
+    "left_mm": 567,
+    "healthy": true,
+    "errors": [],
+    "obstacle_detected": true,
+    "obstacle_directions": ["rear"]
+  },
+  "last_emergency_stop": {
+    "sensor": "rear",
+    "distance_mm": 89,
+    "uptime_sec": 115
+  }
 }
 ```
 
-> **`motor_enabled` について**: 起動直後は常に `false`（TB6612FNGのSTBYピンがLOW）。これは正常な初期状態であり、モーターコマンドを送信すると自動的に `true` になる。事前の有効化操作は不要。`motor_enabled: false` を理由にモーターコマンドの送信を控える必要はない。
+> **`motor_enabled` について**: 起動直後は常に `false`（M138の内部状態）。これは正常な初期状態であり、モーターコマンドを送信すると自動的に `true` になる。事前の有効化操作は不要。`motor_enabled: false` を理由にモーターコマンドの送信を控える必要はない。
+
+#### sensors フィールド
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| front_mm / right_mm / rear_mm / left_mm | int | 各方向の距離 (mm)。0=無効、8190=範囲外/タイムアウト |
+| healthy | bool | 全センサー正常なら true。false の場合、全モーター動作がブロックされる |
+| errors | string[] | エラーのあるセンサー方向 (例: ["front"]) |
+| obstacle_detected | bool | いずれかの方向に障害物あり |
+| obstacle_directions | string[] | 障害物が検知された方向 (例: ["rear", "left"]) |
+
+#### last_emergency_stop フィールド (障害物検知による停止履歴)
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| sensor | string | 検知したセンサー方向 |
+| distance_mm | int | 検知時の距離 |
+| uptime_sec | int | 検知時の起動経過秒数 |
 
 ### GET /capture — カメラJPEG1枚取得
 

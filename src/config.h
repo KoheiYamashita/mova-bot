@@ -9,39 +9,48 @@ namespace mova {
 // ── Firmware ────────────────────────────────────────────────────
 constexpr const char* FIRMWARE_VERSION = "0.1.0";
 
-// ── I2C (Core S3 Port A) ───────────────────────────────────────
-// NOTE: GPIO1/2 は要実機検証 (Port A ピン配置を確認のこと)
-constexpr uint8_t I2C_SDA = 2;
-constexpr uint8_t I2C_SCL = 1;
+// ── M138 Encoder Motor Module ──────────────────────────────────
+constexpr uint8_t  M138_I2C_ADDR = 0x24;
+constexpr uint8_t  M138_I2C_SDA  = 12;  // M5-Bus internal
+constexpr uint8_t  M138_I2C_SCL  = 11;  // M5-Bus internal
 
-// ── PCA9685 ────────────────────────────────────────────────────
-constexpr uint8_t  PCA9685_ADDRESS  = 0x40;
-constexpr uint16_t PCA9685_PWM_FREQ = 1000;  // NOTE: Phase 2 で発熱・ノイズ実測後に調整
+// Speed mapping: API 0-4095 (12-bit) → M138 0-127 (7-bit)
+constexpr uint16_t MOTOR_SPEED_MAX_API = 4095;
+constexpr int8_t   MOTOR_DUTY_MAX_M138 = 127;
 
-// ── Motor pin mapping (PCA9685 channels) ───────────────────────
-struct MotorPinMap {
-    uint8_t in1;
-    uint8_t in2;
-    uint8_t pwm;
+// ── ToF Obstacle Sensors ───────────────────────────────────────
+constexpr uint8_t  PORT_A_SDA          = 2;
+constexpr uint8_t  PORT_A_SCL          = 1;
+constexpr uint8_t  PAHUB2_ADDRESS      = 0x70;
+
+constexpr uint8_t  TOF_CH_FRONT = 0;
+constexpr uint8_t  TOF_CH_RIGHT = 1;
+constexpr uint8_t  TOF_CH_REAR  = 2;
+constexpr uint8_t  TOF_CH_LEFT  = 3;
+constexpr uint8_t  TOF_SENSOR_COUNT = 4;
+
+constexpr uint16_t TOF_THRESHOLD_MM     = 150;
+constexpr uint16_t TOF_POLL_INTERVAL_MS = 50;   // 4センサー1周 = 50ms (20Hz)
+constexpr uint32_t TOF_TIMING_BUDGET_US = 20000; // 1センサーあたりの測定予算
+constexpr uint16_t TOF_SENSOR_TIMEOUT_MS = 50;   // VL53L0X setTimeout() 値
+
+constexpr uint32_t TASK_STACK_OBSTACLE    = 4096;
+constexpr uint8_t  TASK_PRIORITY_OBSTACLE = 6;  // > MOTOR (5)
+
+// ── Omni-Wheel Kinematics ──────────────────────────────────────
+// 各モーターの CW 回転が前進/右移動に寄与する度合い (+1/-1)
+// Motor配置: 0=FL, 1=FR, 2=RL, 3=RR (X配置)
+struct MotorContribution {
+    int8_t forward;  // +1 = 前進に寄与, -1 = 後退に寄与
+    int8_t right;    // +1 = 右移動に寄与, -1 = 左移動に寄与
 };
 
-// PCA9685 チャンネルマッピング (docs/wiring.md 準拠)
-// 各モーター: IN1, IN2, PWM の順
-//   Motor 0: CH0=AIN1, CH1=AIN2, CH2=PWMA  (TB6612FNG #1 A側)
-//   Motor 1: CH4=BIN2, CH3=BIN1, CH5=PWMB  (TB6612FNG #1 B側 — B出力が B02,B01 逆順のため IN1/IN2 swap)
-//   Motor 2: CH6=AIN1, CH7=AIN2, CH8=PWMA  (TB6612FNG #2 A側)
-//   Motor 3: CH10=BIN2, CH9=BIN1, CH11=PWMB (TB6612FNG #2 B側 — B出力が B02,B01 逆順のため IN1/IN2 swap)
-constexpr MotorPinMap MOTOR_PINS[4] = {
-    { 0,  1,  2},  // Motor 0 (A側: そのまま)
-    { 4,  3,  5},  // Motor 1 (B側: IN1/IN2 swapped)
-    { 6,  7,  8},  // Motor 2 (A側: そのまま)
-    {10,  9, 11},  // Motor 3 (B側: IN1/IN2 swapped)
+constexpr MotorContribution MOTOR_CONTRIB_CW[4] = {
+    { +1, +1 },  // Motor 0 (FL) CW → 前進+右
+    { -1, +1 },  // Motor 1 (FR) CW → 後退+右 (※実機で要検証)
+    { +1, -1 },  // Motor 2 (RL) CW → 前進+左
+    { -1, -1 },  // Motor 3 (RR) CW → 後退+左
 };
-
-// TB6612FNG standby channels
-// NOTE: PCA9685 起動直後の出力は不定。外付けプルダウン抵抗を推奨 (Phase 2)
-constexpr uint8_t STBY_CH_1 = 12;
-constexpr uint8_t STBY_CH_2 = 13;
 
 // ── Motor types ────────────────────────────────────────────────
 enum class MotorDirection : uint8_t {

@@ -2,8 +2,9 @@
 
 ## 1. プロジェクト概要
 
-4輪オムニホイールラジコンの制御基板を **M5Stack Core S3** + **TB6612FNG** に置き換える。
+4輪オムニホイールラジコンを **M5Stack Core S3** + **M138 (4ch Encoder Motor Module)** で制御する。
 M5Stack Core S3 をサーバーとして動作させ、外部端末（スマートフォン・PC等）から WiFi 経由で操作する。
+**PaHUB2 + VL53L0X x4** による4方向障害物検知でファームウェアレベルの自動緊急停止を行う。
 
 ## 2. ハードウェア構成
 
@@ -24,71 +25,54 @@ M5Stack Core S3 をサーバーとして動作させ、外部端末（スマー�
 
 | 項目 | 仕様 |
 |------|------|
-| デバイス | TB6612FNG x2 |
-| チャンネル数 | 2ch/個 (計4ch で4モーター対応) |
-| 連続電流 | 1.2A/ch (ピーク 3.2A) |
-| モーター電源電圧 | 2.5V〜13.5V DC |
-| ロジック電源電圧 | 2.7V〜5.5V DC |
-| PWM周波数 | 最大100kHz (IC単体性能。本システムでは PCA9685 経由のため最大1526Hz) |
+| デバイス | M5Stack 4ch Encoder Motor Module (M138) |
+| コントローラー | STM32F030 + BL5617 |
+| チャンネル数 | 4ch |
+| 接続 | I2C (M5-Bus Wire1: GPIO11/12, 0x24) |
+| 電源入力 | DC5521 (PD 12V) |
+| Speed制御 | duty -127..+127 (符号=方向) |
 
-### 2.3 PWM/GPIO エキスパンダー
-
-M5Stack Core S3 の外部利用可能 GPIO は Port A: GPIO1/2 (I2C)、Port B: GPIO8/9、Port C: GPIO17/18 の計6本に限られる。
-4モーター制御に必要な12本の信号線（PWM x4 + 方向制御 x8）を汎用 GPIO だけでは確保できないため、
-Port A の I2C バスに **PCA9685**（16ch 12bit PWM ドライバー）を接続して信号線を拡張する。
+### 2.3 ToF 障害物センサー
 
 | 項目 | 仕様 |
 |------|------|
-| デバイス | PCA9685 |
-| チャンネル数 | 16ch (12bit PWM) |
-| PWM周波数 | 24Hz〜1526Hz (内蔵 25MHz 発振器、8bit プリスケーラ) |
-| 接続 | I2C (Port A: GPIO1/GPIO2) |
-| I2Cアドレス | 0x40 (デフォルト) |
+| I2C マルチプレクサ | PaHUB2 (TCA9548A, 0x70) |
+| センサー | VL53L0X x4 (各 0x29) |
+| 接続 | I2C (Port A: GPIO1/GPIO2) → PaHUB2 → VL53L0X |
+| 検知閾値 | 150mm |
+| ポーリング周期 | 50ms (20Hz) |
+| 配置 | CH0=前方, CH1=右方, CH2=後方, CH3=左方 |
 
-### 2.4 GPIO ピンアサイン
+### 2.4 I2C バス構成
+
+| バス | ピン | デバイス | 用途 |
+|------|------|---------|------|
+| Wire1 (M5-Bus内部) | GPIO11/12 | M138 (0x24), AXP2101, AW9523 | モーター制御 |
+| Wire (Port A) | GPIO1/2 | PaHUB2 (0x70) → VL53L0X x4 (0x29) | 障害物検知 |
 
 #### M5Stack Core S3 ピン使用状況
 
 | GPIO | 用途 | 備考 |
 |------|------|------|
-| GPIO1 (Port A SCL) | PCA9685 I2C SCL | I2C バス |
-| GPIO2 (Port A SDA) | PCA9685 I2C SDA | I2C バス |
+| GPIO1 (Port A SCL) | PaHUB2 I2C SCL | ToF センサー |
+| GPIO2 (Port A SDA) | PaHUB2 I2C SDA | ToF センサー |
+| GPIO11 (M5-Bus SCL) | M138 I2C SCL | モーター制御 (内部) |
+| GPIO12 (M5-Bus SDA) | M138 I2C SDA | モーター制御 (内部) |
 | GPIO8 (Port B) | 予備 | 拡張用 |
 | GPIO9 (Port B) | 予備 | 拡張用 |
 | GPIO17 (Port C) | 予備 | 拡張用 |
 | GPIO18 (Port C) | 予備 | 拡張用 |
 | GPIO0/13/14/33/34 | I2S (スピーカー/マイク) | 内部使用 |
 
-#### PCA9685 → TB6612FNG 配線
+#### M138 モーター制御
 
-| PCA9685 Ch | 接続先 | 機能 |
-|------------|--------|------|
-| CH0 | TB6612FNG #1 PWMA | モーター1 速度 |
-| CH1 | TB6612FNG #1 AIN1 | モーター1 方向1 |
-| CH2 | TB6612FNG #1 AIN2 | モーター1 方向2 |
-| CH3 | TB6612FNG #1 PWMB | モーター2 速度 |
-| CH4 | TB6612FNG #1 BIN1 | モーター2 方向1 |
-| CH5 | TB6612FNG #1 BIN2 | モーター2 方向2 |
-| CH6 | TB6612FNG #2 PWMA | モーター3 速度 |
-| CH7 | TB6612FNG #2 AIN1 | モーター3 方向1 |
-| CH8 | TB6612FNG #2 AIN2 | モーター3 方向2 |
-| CH9 | TB6612FNG #2 PWMB | モーター4 速度 |
-| CH10 | TB6612FNG #2 BIN1 | モーター4 方向1 |
-| CH11 | TB6612FNG #2 BIN2 | モーター4 方向2 |
-| CH12 | TB6612FNG #1 STBY | スタンバイ制御 |
-| CH13 | TB6612FNG #2 STBY | スタンバイ制御 |
-| CH14-15 | 未使用 | 予備 |
+| duty 値 | モーター動作 |
+|---------|-------------|
+| +1..+127 | 正転 (CW) |
+| -1..-127 | 逆転 (CCW) |
+| 0 | 停止 (coast) |
 
-> **注意**: 上記テーブルの列順（機能の並び）は概要説明用です。実際のチャンネル割り当ては `docs/wiring.md` を正とします。
-
-#### TB6612FNG 制御ロジック
-
-| AIN1/BIN1 | AIN2/BIN2 | モーター動作 |
-|-----------|-----------|-------------|
-| HIGH | LOW | 正転 (CW) |
-| LOW | HIGH | 逆転 (CCW) |
-| HIGH | HIGH | ショートブレーキ |
-| LOW | LOW | 停止 |
+> M138 にはショートブレーキ (短絡制動) 機能がない。BRAKE コマンドは coast stop として動作する。
 
 ## 3. 通信プロトコル
 
@@ -186,7 +170,7 @@ Content-Type: application/json
 | フィールド | 型 | 値 | 説明 |
 |-----------|------|------|------|
 | `id` | int | 0-3 | モーター番号 |
-| `speed` | int | 0-4095 | PWM値 (12bit, PCA9685準拠) |
+| `speed` | int | 0-4095 | 速度値 (内部で M138 の 0-127 にマッピング) |
 | `direction` | string | `"cw"`, `"ccw"`, `"brake"`, `"stop"` | 回転方向 |
 
 - 各モーターは独立して制御する（上位の運動学的変換はクライアント側の責務）
@@ -286,7 +270,22 @@ GET /status
     {"id": 1, "speed": 2048, "direction": "ccw"},
     {"id": 2, "speed": 0, "direction": "stop"},
     {"id": 3, "speed": 3200, "direction": "cw"}
-  ]
+  ],
+  "sensors": {
+    "front_mm": 234,
+    "right_mm": 1200,
+    "rear_mm": 89,
+    "left_mm": 567,
+    "healthy": true,
+    "errors": [],
+    "obstacle_detected": true,
+    "obstacle_directions": ["rear"]
+  },
+  "last_emergency_stop": {
+    "sensor": "rear",
+    "distance_mm": 89,
+    "uptime_sec": 115
+  }
 }
 ```
 
@@ -297,7 +296,7 @@ GET /status
 | 項目 | 選定 |
 |------|------|
 | フレームワーク | Arduino (ESP32) |
-| ライブラリ | M5Unified, ESPAsyncWebServer, AsyncTCP, Adafruit PWMServoDriver (PCA9685), ArduinoJson, SD |
+| ライブラリ | M5Unified, M5Module-4EncoderMotor, VL53L0X, ESPAsyncWebServer, AsyncTCP, ArduinoJson, SD |
 | カメラ / ストリーム | `esp_camera.h`, `img_converters.h`, `esp_http_server.h` (ESP-IDF 内蔵、`lib_deps` 不要) |
 | IDE | PlatformIO (推奨) or Arduino IDE |
 
@@ -307,7 +306,8 @@ ESP32-S3 のデュアルコアを活用し、FreeRTOS タスクで並行処理�
 
 | タスク名 | Core | 優先度 | 役割 |
 |----------|------|--------|------|
-| `TaskMotorControl` | Core 0 | 高 | モーター制御 (PCA9685 I2C 通信) |
+| `TaskMotorControl` | Core 0 | 高 | モーター制御 (M138 I2C 通信) |
+| `TaskObstacleDetection` | Core 0 | 最高 | ToF センサーポーリング + 緊急停止 |
 | `TaskAudioPlayback` | Core 0 | 中 | 音声バッファ再生 (I2S 出力) |
 | `TaskWebServer` | Core 1 | 高 | HTTP サーバー (REST API) |
 | (httpd 内部タスク) | Core 1 | — | MJPEG ストリーム配信 (ESP-IDF httpd が管理、明示的タスク生成不要) |
@@ -324,8 +324,10 @@ MOVA/
 │   ├── config.h              # 定数・ピン定義・設定
 │   ├── wifi_config.h         # SD カード WiFi 設定読み込み
 │   ├── wifi_config.cpp
-│   ├── motor_controller.h    # モーター制御クラス
+│   ├── motor_controller.h    # モーター制御クラス (M138)
 │   ├── motor_controller.cpp
+│   ├── obstacle_sensor.h     # 障害物検知 (PaHUB2 + VL53L0X x4)
+│   ├── obstacle_sensor.cpp
 │   ├── web_server.h          # HTTP サーバー / REST API ハンドラー
 │   ├── web_server.cpp
 │   ├── camera.h              # カメラ初期化・キャプチャ
@@ -352,9 +354,9 @@ HTTP ハンドラー (TaskWebServer)
     │
     ├─ motors あり → xQueueSend(motorQueue) → TaskMotorControl
     │                                              │
-    │                                              │ PCA9685 I2C 書き込み
+    │                                              │ 障害物チェック → M138 I2C 書き込み
     │                                              ▼
-    │                                           PCA9685 → TB6612FNG → モーター M0〜M3
+    │                                           M138 → モーター M0〜M3
     │
     ├─ emoji あり  → xQueueSend(displayQueue) → TaskDisplay
     │                                              │
@@ -379,20 +381,18 @@ HTTP ハンドラー (TaskWebServer)
 
 | 項目 | 仕様 |
 |------|------|
-| モーター電源 | 外部バッテリー 7.4V〜12V (2S〜3S LiPo) |
-| ロジック電源 | DIN Base 内蔵バッテリー (3.7V 500mAh) または USB-C 給電 ※CoreS3 標準キットに DIN Base 同梱 |
-| TB6612FNG VM | モーター電源から直結 |
-| TB6612FNG VCC | M5Stack 5V 出力から供給 |
-| PCA9685 VCC | M5Stack 3.3V (CoreS3 の I2C は 3.3V ロジックのため、レベルシフタなしで直結可能) |
-
-**注意**: モーター電源とロジック電源のGNDは必ず共通接続すること。
+| 全系統電源 | PD対応モバイルバッテリー → PD 12V → M138 DC5521 |
+| M138 | モーター駆動 + M5-Bus 経由で Core S3 給電 |
+| Core S3 | M5-Bus 経由で M138 から受電 (USB-C 給電も可) |
 
 ## 7. 安全機構
 
 | 機能 | 説明 |
 |------|------|
+| 障害物検知 | VL53L0X x4 による4方向 ToF センサー。150mm 以下で自動緊急停止 |
+| 方向ブロック | 障害物方向へのモーターコマンドをファームウェアが自動拒否 |
+| Fail-Closed | センサー部分異常 (1つ以上) 時は全モーター動作をブロック。センサーモジュール未接続時はモーター動作許可 (Fail-Open) |
 | ウォッチドッグ | モーター制御コマンドが 3 秒以上途絶えた場合に全モーター停止 |
-| 電流保護 | TB6612FNG 内蔵の過電流保護 |
 | バッテリー監視 | AXP2101 PMU によるバッテリー電圧監視・低電圧警告 |
 | 緊急停止 | `POST /emergency_stop` で即座に全モーター停止 |
 
@@ -426,7 +426,7 @@ SPIFFS に簡易 Web UI を格納し、ブラウザからもアクセス可能�
 - カメラ (GC0308) は 0.3MP (640x480) が上限。高解像度は不可
 - WiFi と BLE の同時使用は可能だが、パフォーマンスに影響あり
 - MJPEG ストリーミングと REST API 制御の同時処理はデュアルコアで分散
-- PCA9685 の I2C 通信速度がモーター制御のレイテンシに影響する (400kHz Fast Mode で約 1ms/コマンド)
+- M138 の speed 解像度は 128段階 (0-127)。API の 4096段階 (0-4095) から内部でマッピングされる
 - 音声はストリーミング再生ではなく、全データ受信後に一括再生する方式とする（リアルタイム音声通話は非対応）
 - カメラ (GC0308) の esp32-camera ドライバには `set_brightness`/`set_contrast`/`set_exposure_ctrl` 等のセンサー設定関数にバグがあり、呼び出すと画像が破壊される。AWB (`set_whitebal`, `set_awb_gain`) のみ安全に使用可能。画質調整が必要な場合は JPEG quality パラメータ (10-63) で対応する
 - `M5.In_I2C.release()` でカメラ SCCB 用に内部 I2C バスを解放する。これにより AXP2101 等の内部デバイスが不安定になる可能性がある

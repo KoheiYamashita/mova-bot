@@ -2,7 +2,7 @@
 #define MOVA_MOTOR_CONTROLLER_H
 
 #include <cstdint>
-#include <Adafruit_PWMServoDriver.h>
+#include <M5Module4EncoderMotor.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/queue.h>
@@ -20,7 +20,7 @@ enum class MotorCommandType : uint8_t {
 struct MotorCommand {
     MotorCommandType type;
     uint8_t          motorId;    // 0-3 (SET_MOTOR 時のみ)
-    uint16_t         speed;      // 0-4095 (SET_MOTOR 時のみ。BRAKE 時は無視、内部で 4095 固定)
+    uint16_t         speed;      // 0-4095 (SET_MOTOR 時のみ)
     MotorDirection   direction;  // (SET_MOTOR 時のみ)
 };
 
@@ -35,16 +35,15 @@ public:
     void getMotorStates(MotorState states[4]) const;
     bool isEnabled() const;
 
+    static int8_t mapSpeedToDuty(uint16_t speed);
+
 private:
-    Adafruit_PWMServoDriver pca9685_{PCA9685_ADDRESS, Wire};
+    M5Module4EncoderMotor driver_;
     SemaphoreHandle_t i2cMutex_ = nullptr;
     bool initialized_ = false;
-    bool enabled_ = false;          // STBY 状態
+    bool enabled_ = false;
     MotorState states_[4] = {};
     uint32_t lastCommandMs_ = 0;
-
-    void setChannelHigh(uint8_t ch);
-    void setChannelLow(uint8_t ch);
 };
 
 void taskMotorControl(void* param);

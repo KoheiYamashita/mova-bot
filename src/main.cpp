@@ -1,9 +1,9 @@
 #include <M5Unified.h>
-#include <Wire.h>
 
 #include "config.h"
 #include "wifi_config.h"
 #include "motor_controller.h"
+#include "obstacle_sensor.h"
 #include "camera.h"
 #include "display.h"
 #include "emoji_data.h"
@@ -19,7 +19,8 @@ QueueHandle_t mova::g_motorQueue   = nullptr;
 QueueHandle_t mova::g_displayQueue = nullptr;
 QueueHandle_t mova::g_audioQueue   = nullptr;
 
-static SemaphoreHandle_t g_i2cMutex = nullptr;
+static SemaphoreHandle_t g_wire1Mutex = nullptr;  // Wire1: M138 + M5.update()
+static SemaphoreHandle_t g_portAMutex = nullptr;  // Wire (Port A): PaHUB2 + VL53L0X
 
 static void printBanner() {
     Serial.println("========================================");
@@ -95,34 +96,49 @@ void setup() {
         delay(2000);
     }
 
-    // --- Motor initialization sequence ---
-    // 生成順序に依存関係あり: Mutex → begin() → Queue → Task
-    showBootStatus("Init Motors...");
-
-    // 1. Mutex 生成 (FATAL: 失敗時は停止)
-    g_i2cMutex = xSemaphoreCreateMutex();
-    if (!g_i2cMutex) {
-        fatalError("I2C Mutex alloc failed");
+    // --- I2C Mutex creation ---
+    g_wire1Mutex = xSemaphoreCreateMutex();
+    if (!g_wire1Mutex) {
+        fatalError("Wire1 Mutex alloc failed");
     }
 
-    // 2. MotorController 初期化 (WARNING: 失敗時は続行)
-    if (!g_motor.begin(g_i2cMutex)) {
-        Serial.println("[Motor] WARNING: PCA9685 init failed - motor control disabled");
-        showBootStatus("Motor Init WARN", "PCA9685 not found");
+    g_portAMutex = xSemaphoreCreateMutex();
+    if (!g_portAMutex) {
+        fatalError("PortA Mutex alloc failed");
+    }
+
+    // --- Motor initialization sequence ---
+    showBootStatus("Init Motors...");
+
+    if (!g_motor.begin(g_wire1Mutex)) {
+        Serial.println("[Motor] WARNING: M138 init failed - motor control disabled");
+        showBootStatus("Motor Init WARN", "M138 not found");
         delay(3000);
     }
 
-    // 3. キュー生成 (FATAL: 失敗時は停止)
+    // Motor queue + task
     mova::g_motorQueue = xQueueCreate(mova::QUEUE_SIZE_MOTOR, sizeof(mova::MotorCommand));
     if (!mova::g_motorQueue) {
         fatalError("Motor queue alloc failed");
     }
 
-    // 4. モータータスク起動
     xTaskCreatePinnedToCore(
         mova::taskMotorControl, "MotorCtrl",
         mova::TASK_STACK_MOTOR, &g_motor,
         mova::TASK_PRIORITY_MOTOR, nullptr, 0);
+
+    // --- Obstacle sensors (PaHUB2 + 4x VL53L0X) ---
+    showBootStatus("Init Sensors...");
+    if (!mova::obstacleInit(g_portAMutex, mova::g_motorQueue, &g_motor)) {
+        Serial.println("[Sensor] WARNING: ToF init failed - obstacle detection disabled");
+        showBootStatus("Sensor WARN", "ToF not found");
+        delay(2000);
+    } else {
+        xTaskCreatePinnedToCore(
+            mova::taskObstacleDetection, "ObstDet",
+            mova::TASK_STACK_OBSTACLE, nullptr,
+            mova::TASK_PRIORITY_OBSTACLE, nullptr, 0);
+    }
 
     // --- Display / Audio queue + task setup ---
     mova::g_displayQueue = xQueueCreate(mova::QUEUE_SIZE_DISPLAY, sizeof(mova::DisplayCommand));
@@ -189,6 +205,10 @@ void setup() {
 }
 
 void loop() {
-    M5.update();
+    // Wire1 mutex: protect M5.update() from motor I2C contention
+    if (xSemaphoreTake(g_wire1Mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        M5.update();
+        xSemaphoreGive(g_wire1Mutex);
+    }
     delay(100);
 }

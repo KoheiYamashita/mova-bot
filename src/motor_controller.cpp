@@ -1,17 +1,15 @@
 #include <Arduino.h>
-#include <Wire.h>
 
 #include "motor_controller.h"
+#include "obstacle_sensor.h"
 
 namespace mova {
 
-// ── Helper: PCA9685 digital output ──────────────────────────────
-void MotorController::setChannelHigh(uint8_t ch) {
-    pca9685_.setPWM(ch, 4096, 0);
-}
-
-void MotorController::setChannelLow(uint8_t ch) {
-    pca9685_.setPWM(ch, 0, 4096);
+// ── Speed mapping: API 0-4095 → M138 0-127 ─────────────────────
+int8_t MotorController::mapSpeedToDuty(uint16_t speed) {
+    if (speed == 0) return 0;
+    if (speed >= MOTOR_SPEED_MAX_API) return MOTOR_DUTY_MAX_M138;
+    return static_cast<int8_t>((uint32_t(speed) * 127 + 2047) / 4095);
 }
 
 // ── begin ───────────────────────────────────────────────────────
@@ -27,47 +25,30 @@ bool MotorController::begin(SemaphoreHandle_t i2cMutex) {
         return false;
     }
 
-    if (!Wire.begin(I2C_SDA, I2C_SCL)) {
-        Serial.println("[Motor] ERROR: Wire.begin() failed");
+    if (!driver_.begin(&Wire1, M138_I2C_ADDR, M138_I2C_SDA, M138_I2C_SCL, 100000)) {
+        Serial.println("[Motor] ERROR: M138 not found on I2C bus");
         xSemaphoreGive(i2cMutex_);
         return false;
     }
-    Wire.setClock(400000);  // I2C Fast Mode (PLAN.md 準拠)
 
-    if (!pca9685_.begin()) {
-        Serial.println("[Motor] ERROR: PCA9685 not found on I2C bus");
-        xSemaphoreGive(i2cMutex_);
-        return false;
-    }
-    pca9685_.setPWMFreq(PCA9685_PWM_FREQ);  // 1000Hz
-    pca9685_.setOutputMode(true);            // トーテムポール出力
-
-    // STBY を LOW に設定（安全設計: 起動直後のモーター暴走防止）
-    setChannelLow(STBY_CH_1);
-    setChannelLow(STBY_CH_2);
-
-    // 全モーターチャンネルを STOP (IN1=LOW, IN2=LOW, PWM=0) に初期化
+    // Set all motors to NORMAL_MODE with speed 0
     for (uint8_t i = 0; i < 4; i++) {
-        const auto& pins = MOTOR_PINS[i];
-        setChannelLow(pins.in1);
-        setChannelLow(pins.in2);
-        pca9685_.setPWM(pins.pwm, 0, 4096);
+        driver_.setMode(i, NORMAL_MODE);
+        driver_.setMotorSpeed(i, 0);
         states_[i] = {MotorDirection::STOP, 0};
     }
 
-    // I2C 疎通確認: 初期化書き込み後にバスが正常か検証
-    Wire.beginTransmission(PCA9685_ADDRESS);
-    if (Wire.endTransmission() != 0) {
-        Serial.println("[Motor] ERROR: PCA9685 lost after init sequence");
-        xSemaphoreGive(i2cMutex_);
-        return false;
+    // Log firmware version (note: library has typo "Fireware")
+    uint8_t fw = 0;
+    if (driver_.getFirewareVersion(&fw)) {
+        Serial.printf("[Motor] M138 firmware v%d\n", fw);
     }
 
     xSemaphoreGive(i2cMutex_);
 
     enabled_ = false;
     initialized_ = true;
-    Serial.println("[Motor] PCA9685 initialized OK");
+    Serial.println("[Motor] M138 initialized OK");
     return true;
 }
 
@@ -75,57 +56,30 @@ bool MotorController::begin(SemaphoreHandle_t i2cMutex) {
 void MotorController::setMotor(uint8_t index, MotorDirection direction, uint16_t speed) {
     if (!initialized_ || index >= 4) return;
 
-    // Clamp speed to 12-bit range
     if (speed > 4095) speed = 4095;
 
-    if (xSemaphoreTake(i2cMutex_, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    if (xSemaphoreTake(i2cMutex_, pdMS_TO_TICKS(20)) != pdTRUE) return;
 
-    const auto& pins = MOTOR_PINS[index];
+    int8_t duty = mapSpeedToDuty(speed);
 
-    // STBY 有効化（初回コマンド時）
-    if (!enabled_) {
-        // 安全状態を確保してから STBY を有効化
-        setChannelLow(pins.in1);
-        setChannelLow(pins.in2);
-        pca9685_.setPWM(pins.pwm, 0, 4096);
-        setChannelHigh(STBY_CH_1);
-        setChannelHigh(STBY_CH_2);
-        enabled_ = true;
-    }
-
-    // 方向ピン + PWM 設定
-    uint16_t actualSpeed = speed;
     switch (direction) {
         case MotorDirection::CW:
-            setChannelHigh(pins.in1);
-            setChannelLow(pins.in2);
+            driver_.setMotorSpeed(index, +duty);
+            if (!enabled_) enabled_ = true;
             break;
         case MotorDirection::CCW:
-            setChannelLow(pins.in1);
-            setChannelHigh(pins.in2);
+            driver_.setMotorSpeed(index, -duty);
+            if (!enabled_) enabled_ = true;
             break;
         case MotorDirection::BRAKE:
-            setChannelHigh(pins.in1);
-            setChannelHigh(pins.in2);
-            actualSpeed = 4095;  // ショートブレーキ: speed 引数を無視
-            break;
         case MotorDirection::STOP:
         default:
-            setChannelLow(pins.in1);
-            setChannelLow(pins.in2);
-            actualSpeed = 0;
+            driver_.setMotorSpeed(index, 0);
+            speed = 0;  // /status に実態を反映 (M138 は coast stop)
             break;
     }
 
-    if (actualSpeed == 0) {
-        pca9685_.setPWM(pins.pwm, 0, 4096);  // full OFF
-    } else if (actualSpeed >= 4095) {
-        pca9685_.setPWM(pins.pwm, 4096, 0);  // full ON
-    } else {
-        pca9685_.setPWM(pins.pwm, 0, actualSpeed);
-    }
-
-    states_[index] = {direction, actualSpeed};
+    states_[index] = {direction, speed};
 
     xSemaphoreGive(i2cMutex_);
 }
@@ -136,18 +90,11 @@ void MotorController::emergencyStop() {
 
     if (xSemaphoreTake(i2cMutex_, pdMS_TO_TICKS(100)) != pdTRUE) return;
 
-    // 全モーターを STOP: IN1=LOW, IN2=LOW, PWM=0
     for (uint8_t i = 0; i < 4; i++) {
-        const auto& pins = MOTOR_PINS[i];
-        setChannelLow(pins.in1);
-        setChannelLow(pins.in2);
-        pca9685_.setPWM(pins.pwm, 0, 4096);  // full OFF
+        driver_.setMotorSpeed(i, 0);
         states_[i] = {MotorDirection::STOP, 0};
     }
 
-    // STBY を LOW に設定（ハードウェアレベル無効化）
-    setChannelLow(STBY_CH_1);
-    setChannelLow(STBY_CH_2);
     enabled_ = false;
 
     xSemaphoreGive(i2cMutex_);
@@ -161,7 +108,7 @@ void MotorController::feedWatchdog() {
 }
 
 bool MotorController::checkWatchdog() {
-    if (!enabled_) return false;  // 既に停止済み
+    if (!enabled_) return false;
 
     if (millis() - lastCommandMs_ >= WATCHDOG_TIMEOUT_MS) {
         Serial.println("[Motor] Watchdog timeout - stopping motors");
@@ -194,16 +141,23 @@ void taskMotorControl(void* param) {
         if (received == pdTRUE) {
             switch (cmd.type) {
                 case MotorCommandType::SET_MOTOR:
-                    controller->setMotor(cmd.motorId, cmd.direction, cmd.speed);
+                    // Fail-Closed: センサー異常時は全モーター動作拒否
+                    if (!isSensorSystemHealthy()) {
+                        Serial.printf("[Motor] Blocked: sensor system unhealthy\n");
+                        controller->setMotor(cmd.motorId, MotorDirection::STOP, 0);
+                    } else if (wouldMoveTowardObstacle(cmd.motorId, cmd.direction)) {
+                        Serial.printf("[Motor] Blocked: motor %d toward obstacle\n", cmd.motorId);
+                        controller->setMotor(cmd.motorId, MotorDirection::STOP, 0);
+                    } else {
+                        controller->setMotor(cmd.motorId, cmd.direction, cmd.speed);
+                    }
                     controller->feedWatchdog();
                     break;
                 case MotorCommandType::EMERGENCY_STOP:
                     controller->emergencyStop();
-                    // Watchdog は feed しない（意図的停止）
                     break;
             }
         } else {
-            // キュータイムアウト — ウォッチドッグチェック
             controller->checkWatchdog();
         }
     }
