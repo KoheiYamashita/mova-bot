@@ -7,3 +7,6 @@ __pycache__/
 # Secrets
 wifi_credentials.json
 .claude/skills/mova/.env
+
+# Setup progress
+.claude/skills/setup/progress.json
