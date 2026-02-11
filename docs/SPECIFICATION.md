@@ -88,6 +88,7 @@ WiFi を主要通信手段とする。ESP32-S3 は Classic Bluetooth (BR/EDR) �
 | カメラ映像 | HTTP (MJPEG ストリーム, **port 81**) | リアルタイム映像配信 |
 | 制御コマンド | HTTP REST API (`POST /command`, port 80) | モーター・絵文字・音声を単一APIで制御 |
 | 状態取得 | HTTP REST API (`GET /status`, port 80) | 接続状態・バッテリー等 |
+| マイク録音 | HTTP REST API (`POST /mic/record`, port 80) | 環境音録音・音量取得 |
 | 緊急停止 | HTTP REST API (`POST /emergency_stop`, port 80) | 全モーター即時停止 |
 
 > **注意**: MJPEG ストリーミングは ESPAsyncWebServer の multipart 制約のため、ESP-IDF httpd を用いて **port 81** で配信する。REST API およびその他の機能は ESPAsyncWebServer により **port 80** で提供する。
@@ -236,7 +237,50 @@ Content-Type: application/json
 }
 ```
 
-### 4.3 緊急停止
+### 4.3 マイク録音
+
+```
+POST /mic/record
+Content-Type: application/json
+```
+
+指定秒数だけ環境音を録音し、音量レベルと音声データを返す。
+録音中はスピーカーが一時的に無効になる（I2S ポート共有のため）。
+
+- Request:
+```json
+{
+  "duration": 2.0,
+  "sample_rate": 16000
+}
+```
+
+| フィールド | 型 | 値 | 説明 |
+|-----------|------|------|------|
+| `duration` | float | 0.5-3.0 | 録音秒数 (省略時 1.0) |
+| `sample_rate` | int | 16000 | サンプルレート (現在この値のみ対応) |
+
+- Response (200 OK):
+```json
+{
+  "status": "ok",
+  "rms": 0.05,
+  "peak": 1234,
+  "duration": 2.0,
+  "sample_rate": 16000,
+  "audio": "<Base64 エンコード PCM int16 mono>"
+}
+```
+
+| フィールド | 型 | 説明 |
+|-----------|------|------|
+| `rms` | float | RMS 音量 (0.0-1.0 正規化) |
+| `peak` | int | ピーク絶対値 (int16 範囲: 0-32768) |
+| `audio` | string | Base64 エンコード PCM (int16, mono) |
+
+- 503 Service Unavailable: 録音中の同時リクエスト、またはマイク未初期化
+
+### 4.4 緊急停止
 
 ```
 POST /emergency_stop
@@ -251,7 +295,7 @@ POST /emergency_stop
 }
 ```
 
-### 4.4 システム状態
+### 4.5 システム状態
 
 ```
 GET /status
@@ -309,7 +353,8 @@ ESP32-S3 のデュアルコアを活用し、FreeRTOS タスクで並行処理�
 | `TaskMotorControl` | Core 0 | 高 | モーター制御 (M138 I2C 通信) |
 | `TaskObstacleDetection` | Core 0 | 最高 | ToF センサーポーリング + 緊急停止 |
 | `TaskAudioPlayback` | Core 0 | 中 | 音声バッファ再生 (I2S 出力) |
-| `TaskWebServer` | Core 1 | 高 | HTTP サーバー (REST API) |
+| `TaskMicRecording` | Core 0 | 中 | マイク録音 (ES7210 I2S 入力) |
+| (ESPAsyncWebServer) | Core 1 | — | HTTP サーバー (REST API, ライブラリ内部でタスク管理) |
 | (httpd 内部タスク) | Core 1 | — | MJPEG ストリーム配信 (ESP-IDF httpd が管理、明示的タスク生成不要) |
 | `TaskDisplay` | Core 1 | 低 | 絵文字描画・UI更新 |
 
@@ -334,9 +379,12 @@ MOVA/
 │   ├── camera.cpp
 │   ├── audio_player.h        # 音声再生 (I2S)
 │   ├── audio_player.cpp
+│   ├── mic_recorder.h        # マイク録音 (ES7210)
+│   ├── mic_recorder.cpp
 │   ├── display.h             # ディスプレイ制御・絵文字表示
 │   ├── display.cpp
-│   └── emoji_data.h          # 絵文字ビットマップデータ
+│   ├── emoji_data.h          # 絵文字インデックス
+│   └── emoji_bitmaps.h       # 絵文字 JPEG ビットマップ (8種)
 ├── data/                     # SPIFFS ファイル (Web UI 等)
 │   └── index.html            # 操作用 Web UI
 └── docs/
@@ -428,5 +476,6 @@ SPIFFS に簡易 Web UI を格納し、ブラウザからもアクセス可能�
 - MJPEG ストリーミングと REST API 制御の同時処理はデュアルコアで分散
 - M138 の speed 解像度は 128段階 (0-127)。API の 4096段階 (0-4095) から内部でマッピングされる
 - 音声はストリーミング再生ではなく、全データ受信後に一括再生する方式とする（リアルタイム音声通話は非対応）
+- スピーカーとマイクは同一 I2S ポートを共有するため、録音中は再生不可、再生中は録音不可
 - カメラ (GC0308) の esp32-camera ドライバには `set_brightness`/`set_contrast`/`set_exposure_ctrl` 等のセンサー設定関数にバグがあり、呼び出すと画像が破壊される。AWB (`set_whitebal`, `set_awb_gain`) のみ安全に使用可能。画質調整が必要な場合は JPEG quality パラメータ (10-63) で対応する
 - `M5.In_I2C.release()` でカメラ SCCB 用に内部 I2C バスを解放する。これにより AXP2101 等の内部デバイスが不安定になる可能性がある
