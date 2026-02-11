@@ -10,3 +10,6 @@ wifi_credentials.json
 
 # Setup progress
 .claude/skills/setup/progress.json
+
+# Calibration output
+calibration_out/
