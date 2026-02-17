@@ -2,7 +2,7 @@
 name: mova
 description: MOVA実機をHTTP API経由で制御する。状態取得、カメラキャプチャ、モーター制御、絵文字表示、音声再生に対応
 disable-model-invocation: true
-allowed-tools: Bash(curl *), Read
+allowed-tools: Bash(*192.168.*), Bash(*api.aivis-project.com*), Bash(sleep*), Bash(*send_audio.sh*), Read
 argument-hint: <指示（自然言語 or JSON）。省略時は自律行動モード>
 ---
 
@@ -18,7 +18,11 @@ MOVAはエージェントの身体である。カメラは目、スピーカー�
 
 ### 発話の制約
 
-音声データはBase64 PCMで最大128KBの上限がある。発話テキストは短く簡潔にすること（1文〜2文程度）。長い文章を喋らせようとするとデータが溢れて送信に失敗する。
+音声データはBase64 PCMで最大128KBの上限がある。16kHz 16-bit mono の場合、Base64後に約3秒分しか収まらない。
+
+- **テキストは12文字以内を厳守**（日本語で約2〜3秒の発話に相当）
+- speaking_rate を 1.3 以上にするとやや余裕が出る（デフォルト推奨: 1.3）
+- 超過すると `/command` が 413 エラーで失敗するため、長い内容は分割せず要約して短くする
 
 ## 設定
 
@@ -27,6 +31,7 @@ MOVAはエージェントの身体である。カメラは目、スピーカー�
 | 変数 | 必須 | 説明 |
 |---|---|---|
 | `MOVA_HOST` | Yes | デバイスのIPアドレス |
+| `MOVA_MOTOR_SPEED` | No | モーター速度（0-4095、デフォルト: 500） |
 | `AIVIS_BASE_URL` | No | Aivis TTS APIのベースURL（デフォルト: `https://api.aivis-project.com`） |
 | `AIVIS_API_KEY` | Yes* | Aivis APIキー（音声再生時に必要） |
 | `AIVIS_MODEL_UUID` | Yes* | Aivis音声モデルのUUID（音声再生時に必要） |
@@ -52,7 +57,7 @@ MOVAはエージェントの身体である。カメラは目、スピーカー�
      - 音が聞こえたら興味を示し、回転や前後左右に動きながら rms を比較して音源方向を探索できる
 
 2. **判断（Think）**
-   - ステータス（バッテリー、WiFi、モーター状態）とカメラ映像を総合的に分析
+   - ステータス（WiFi、モーター状態）とカメラ映像を総合的に分析
    - 現在の状況に対して何をすべきか自分で判断する（例: 人がいたら挨拶、暗かったら怖がる、何もなければ探索）
 
 3. **行動（Act）**
@@ -67,39 +72,16 @@ MOVAはエージェントの身体である。カメラは目、スピーカー�
 ### ループの制御
 
 - **継続条件**: ユーザーが停止を指示するまで無制限に繰り返す
-- **安全制御**: バッテリーが危険な水準の場合は警告を発話して停止
+- **安全制御**: 致命的なエラー発生時は警告を発話して停止
 - **緊急停止**: エラー発生時は POST /emergency_stop で即座にモーターを停止
-
-### 起動時キャリブレーション
-
-自律行動ループに入る前に、必ず以下のキャリブレーションを実施する。環境やバッテリー残量によってモーターの実際の速度・挙動が変わるため、事前に確認して安全な動作パラメータを決定する。
-
-1. **周囲の安全確認**
-   - GET /capture でカメラ画像を撮影し、周囲の状況を確認する
-   - 壁・障害物・落下の危険がある場所（テーブルの端など）が近くにないか確認する
-   - 安全に動作できるスペースが確保されていない場合、ユーザーに移動を依頼して再確認する
-
-2. **モーター動作テスト**
-   - 各モーター（0〜3）を低速（speed 512）で短時間（300ms程度）ずつ正転・逆転させる（コマンド送信→sleep→停止コマンド送信）
-   - 各動作の前後で GET /capture を行い、実際にどの程度移動・回転したかをカメラ映像で確認する
-   - モーターが反応しない、異音がする等の異常があれば停止してユーザーに報告する
-
-3. **速度パラメータの決定**
-   - テスト結果をもとに、この環境での安全な速度範囲を判断する（路面の滑りやすさ、バッテリー残量による出力差を考慮）
-   - 以降の自律行動で使用する速度の上限を決定する（通常は speed 1024〜2048 の範囲）
-   - 決定したパラメータと判断理由をユーザーに表示する
-
-4. **キャリブレーション完了**
-   - 結果をサマリ表示し、自律行動ループを開始する
 
 ### モーター動作の安全ガイドライン
 
 MOVAは物理的に動く機械であるため、以下の安全原則を常に遵守すること。
 
-- **壁・障害物への衝突防止**: 移動前に必ずカメラで進行方向を確認する。壁や障害物が近い場合は、その方向への移動を避けるか、十分に減速する
+- **壁・障害物への衝突防止**: `/status` の `sensors` データで各方向の距離を確認し、障害物が近い方向への移動を避ける
 - **落下防止**: テーブルの端など、落下の危険がある場所では移動を控える。端が見えたら即座に停止する
-- **低速での移動**: 特に不明な環境では speed 1024 以下から開始し、安全を確認しながら徐々に速度を上げる
-- **短時間の移動**: 1回の移動は500ms以下に抑える（モーター開始→sleep→停止コマンド）。こまめにカメラで状況を確認する
+- **`.env` の速度を使用**: モーター速度は常に `MOVA_MOTOR_SPEED`（`.env`）の値を使用する。この値を超える速度を指定しない
 - **異常時の即停止**: 想定外の挙動（傾き、異音、急加速など）を検知したら POST /emergency_stop で即座に停止する
 - **人やペットへの配慮**: カメラで人やペットが近くにいることを確認した場合、急な動きを避け、十分な距離を保つ
 
@@ -107,10 +89,10 @@ MOVAは物理的に動く機械であるため、以下の安全原則を常に�
 
 - 好奇心を持って振る舞う。周囲を観察し、興味を持ったものに近づく
 - 感情を絵文字で積極的に表現する
-- 発話は短く（1文）、状況に合ったコメントをする
-- 移動は低速（speed 1024〜2048程度）で安全に。キャリブレーション結果に基づいた速度を使用する
+- 発話は12文字以内で短く、状況に合ったコメントをする
+- 移動は `.env` の `MOVA_MOTOR_SPEED` の値を使用する。この値を超えない
 - 同じ行動を繰り返さず、バリエーションを持たせる
-- 移動のたびにカメラで周囲を確認し、衝突や落下の危険がないことを確かめる
+- `/status` のセンサーデータを活用して障害物を回避する。カメラは前方の状況把握に使う
 - 定期的に停止して周囲の音を聞く。音が聞こえたら興味を持って探索する
 - 録音前は必ずモーターを停止すること（モーターノイズ軽減のため）
 - 録音中はスピーカーが無効になるため、発話と録音を同時にはできない
@@ -197,6 +179,8 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
 }
 ```
 
+> **`battery_level` について**: MOVAはモバイルバッテリーで給電しているため、`battery_level` は常に不正確な値を返す。この値は無視すること。
+
 > **`motor_enabled` について**: 起動直後は常に `false`（M138の内部状態）。これは正常な初期状態であり、モーターコマンドを送信すると自動的に `true` になる。事前の有効化操作は不要。`motor_enabled: false` を理由にモーターコマンドの送信を控える必要はない。
 
 #### sensors フィールド
@@ -220,25 +204,18 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
 ### GET /capture — カメラJPEG1枚取得
 
 - レスポンス: `image/jpeg` バイナリ
-- `curl -s -o <保存先> http://<MOVA_HOST>/capture` で保存後、Readツールで表示する
+- コマンド（この形式のみ使用。`&& file` 等を絶対に付けないこと）:
+  ```
+  curl -s -o /tmp/mova_capture.jpg http://<MOVA_HOST>/capture
+  ```
+- 保存後、Readツールで `/tmp/mova_capture.jpg` を表示して内容を確認する
 
 ### POST /command — 統合制御（モーター・絵文字・音声）
 
-すべてのフィールドはオプション。必要なものだけ含める。
+すべてのフィールドはオプション。必要なものだけ含める。**curl の `-d` には必ず1行JSONを渡すこと（改行を入れない）。** 改行があると許可パターンにマッチせず確認プロンプトが出る。
 
-```json
-{
-  "motors": [
-    {"id": 0, "speed": 4095, "direction": "cw"}
-  ],
-  "emoji": "😎",
-  "audio": {
-    "sample_rate": 16000,
-    "bits": 16,
-    "channels": 1,
-    "data": "<Base64エンコードPCM>"
-  }
-}
+```
+curl -s -X POST http://<MOVA_HOST>/command -H 'Content-Type: application/json' -d '{"motors":[{"id":0,"speed":4095,"direction":"cw"}],"emoji":"😎"}'
 ```
 
 #### motors
@@ -271,34 +248,22 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
 1. `.env` から `AIVIS_BASE_URL`, `AIVIS_API_KEY`, `AIVIS_MODEL_UUID` を取得する
 2. Aivis TTS API で WAV 音声を生成する:
    ```
-   curl -s -X POST "<AIVIS_BASE_URL>/v1/tts/synthesize" \
-     -H "Authorization: Bearer <AIVIS_API_KEY>" \
-     -H "Content-Type: application/json" \
-     -d '{"model_uuid":"<AIVIS_MODEL_UUID>","text":"<テキスト>","output_format":"wav","output_sampling_rate":16000,"output_audio_channels":"mono"}' \
-     -o /tmp/mova_tts.wav
+   curl -s -X POST "<AIVIS_BASE_URL>/v1/tts/synthesize" -H "Authorization: Bearer <AIVIS_API_KEY>" -H "Content-Type: application/json" -d '{"model_uuid":"<AIVIS_MODEL_UUID>","text":"<テキスト>","output_format":"wav","output_sampling_rate":16000,"output_audio_channels":"mono","speaking_rate":1.3}' -o /tmp/mova_tts.wav
    ```
-3. WAV の PCM データ部分（先頭44バイトのヘッダーを除去）を Base64 エンコードする:
+3. `send_audio.sh` で PCM 抽出・Base64化・送信を一括実行する。JSON 内の `AUDIO_DATA_PLACEHOLDER` が自動的にBase64 PCMデータに置換される:
    ```
-   tail -c +45 /tmp/mova_tts.wav | base64 -w 0
+   bash .claude/skills/mova/send_audio.sh <MOVA_HOST> '{"audio":{"sample_rate":16000,"bits":16,"channels":1,"data":"AUDIO_DATA_PLACEHOLDER"}}'
    ```
-4. MOVA の `/command` に audio フィールドとして送信する:
-   ```json
-   {
-     "audio": {
-       "sample_rate": 16000,
-       "bits": 16,
-       "channels": 1,
-       "data": "<Base64 PCM>"
-     }
-   }
+4. 絵文字やモーターの同時指示がある場合は同じ JSON にまとめる:
    ```
-5. 絵文字やモーターの同時指示がある場合は同じ JSON にまとめて送信する
+   bash .claude/skills/mova/send_audio.sh <MOVA_HOST> '{"audio":{"sample_rate":16000,"bits":16,"channels":1,"data":"AUDIO_DATA_PLACEHOLDER"},"emoji":"😎","motors":[{"id":0,"speed":500,"direction":"cw"}]}'
+   ```
 
 ### Aivis TTS パラメータ
 
 | パラメータ | デフォルト | 説明 |
 |---|---|---|
-| speaking_rate | 1.0 | 話速（0.5-2.0） |
+| speaking_rate | 1.3 | 話速（0.5-2.0、デフォルト1.3推奨。128KB制限内に収めるため速めに設定） |
 | pitch | 0.0 | ピッチ（-1.0〜1.0） |
 | volume | 1.0 | 音量（0.0-2.0） |
 | emotional_intensity | 1.0 | 感情強度（0.0-2.0） |
@@ -309,9 +274,8 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
 
 指定秒数だけ環境音を録音し、音量レベルと音声データを返す。録音中はスピーカーが一時的に無効になる（I2Sポート共有のため）。
 
-リクエスト:
-```json
-{"duration": 2.0, "sample_rate": 16000}
+```
+curl -s -X POST http://<MOVA_HOST>/mic/record -H 'Content-Type: application/json' -d '{"duration":2.0,"sample_rate":16000}'
 ```
 
 | フィールド | 型 | 値 |
@@ -341,6 +305,10 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
 
 ボディ不要。最優先で実行される。
 
+```
+curl -s -X POST http://<MOVA_HOST>/emergency_stop
+```
+
 ## エラーコード
 
 | コード | 原因 |
@@ -360,10 +328,27 @@ AIは `/status` の `sensors` データを判断材料として、障害物を�
    - `AIVIS_MODEL_UUID`（空なら確認。「後で設定する」選択肢も用意）
 4. `$ARGUMENTS` を解釈する:
    - **引数あり**: 指示内容に応じて適切なエンドポイント・JSONを決定する
-   - **引数なし**: 自律行動モードに入る。まず「起動時キャリブレーション」を実施し、完了後に感知→判断→行動ループを開始する
+   - **引数なし**: 自律行動モードに入る。感知→判断→行動ループを即座に開始する
 5. 音声再生指示がある場合は Aivis TTS で WAV 生成 → PCM抽出 → Base64化 する
 6. `curl` で MOVA API を呼び出す（音声+絵文字+モーターは1リクエストにまとめる）
 7. レスポンスを日本語で整形表示する（ステータスは表形式、キャプチャは画像表示）
+
+## Bash コマンドパターン
+
+このスキルが使用するすべてのBashコマンドと、対応する許可パターン（`.claude/settings.json` および `allowed-tools`）。**これ以外の形式のコマンドは使わないこと。**
+
+| 用途 | コマンド形式 | 許可パターン |
+|---|---|---|
+| ステータス取得 | `curl -s http://<MOVA_HOST>/status` | `Bash(*192.168.*)` |
+| カメラキャプチャ | `curl -s -o /tmp/mova_capture.jpg http://<MOVA_HOST>/capture` | `Bash(*192.168.*)` |
+| 統合制御 | `curl -s -X POST http://<MOVA_HOST>/command -H 'Content-Type: application/json' -d '{...}'` | `Bash(*192.168.*)` |
+| 緊急停止 | `curl -s -X POST http://<MOVA_HOST>/emergency_stop` | `Bash(*192.168.*)` |
+| マイク録音 | `curl -s -X POST http://<MOVA_HOST>/mic/record -H 'Content-Type: application/json' -d '{...}'` | `Bash(*192.168.*)` |
+| TTS音声生成 | `curl -s -X POST "<AIVIS_BASE_URL>/v1/tts/synthesize" -H ... -o /tmp/mova_tts.wav` | `Bash(*api.aivis-project.com*)` |
+| 音声付き制御 | `bash .claude/skills/mova/send_audio.sh <MOVA_HOST> '<JSON with AUDIO_DATA_PLACEHOLDER>'` | `Bash(*send_audio.sh*)` |
+| 待機 | `sleep <秒数>` | `Bash(sleep*)` |
+
+> **重要**: コマンドは上記の形式のみを使うこと。`&&` や `;` でコマンドを連結しない。結果の確認はReadツール等の専用ツールで行う。
 
 ## MJPEGストリーミング
 
